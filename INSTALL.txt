@@ -1,0 +1,11 @@
+Install with setuptools:
+
+  python -m pip install .
+
+Editable install:
+
+  python -m pip install -e .
+
+CLI entrypoint:
+
+  outputllsp3 --help
