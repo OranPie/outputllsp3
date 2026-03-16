@@ -4,8 +4,8 @@ PACKAGE_NAME = "outputllsp3"
 from .version import __version__
 
 VERSION = __version__
-UPDATED_AT = "2026-03-15"
-DOCS_UPDATED_AT = "2026-03-15"
+UPDATED_AT = "2026-03-16"
+DOCS_UPDATED_AT = "2026-03-16"
 PACKAGE_LAYOUT = {
     "core": ["catalog.py", "parser.py", "project.py", "schema.py"],
     "authoring": ["api.py", "flow.py", "wrapper.py", "spikepython.py", "enums.py"],
@@ -43,6 +43,15 @@ FEATURES = {
     ],
 }
 CHANGELOG = [
+    {"version": "0.29.0", "date": "2026-03-16", "notes": [
+        "Fixed NameError in pythonfirst const_eval when a BoolOp expression appeared at module level.",
+        "Fixed parent-pointer validation error when using `not (x == y)` in python-first mode (negate_condition Eq now uses not_(eq(...)) instead of a shared-reference or()).",
+        "Fixed negate_condition fallback in python-first mode to use operator_not instead of eq(value, 0), avoiding 'equals connected to boolean opcode' validation errors.",
+        "Fixed ast_transpiler negate_condition Eq case (was always returning True via gt(1,0); now uses not_(eq(...))).",
+        "Fixed ast_transpiler negate_condition fallback from UnsupportedNode to graceful not_() wrapper.",
+        "parser.parse_llsp3 now accepts .llsp files (same format as .llsp3), gives clearer error messages for missing archive members.",
+        "Added export_llsp3_to_python to the public __all__ export list.",
+    ]},
     {"version": "0.28.0", "date": "2026-03-15", "notes": [
         "python-first export now emits valid Python placeholders instead of invalid comment-like expression stubs.",
         "python-first export recognizes more drivebase and sensor patterns and lifts common procedure calls to robot.* helpers when possible.",

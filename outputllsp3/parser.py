@@ -20,7 +20,7 @@ class LLSP3Document:
         for target in self.project.get("targets", []):
             if not target.get("isStage"):
                 return target
-        raise ValueError("No sprite target found")
+        raise ValueError("No sprite target found in project.json")
 
     @property
     def blocks(self) -> dict[str, dict[str, Any]]:
@@ -52,10 +52,42 @@ class LLSP3Document:
 
 
 def parse_llsp3(path: str | Path) -> LLSP3Document:
-    path = str(path)
-    with zipfile.ZipFile(path, "r") as outer:
-        manifest = json.loads(outer.read("manifest.json").decode("utf-8"))
-        scratch_sb3 = outer.read("scratch.sb3")
-    with zipfile.ZipFile(io.BytesIO(scratch_sb3), "r") as inner:
-        project = json.loads(inner.read("project.json").decode("utf-8"))
-    return LLSP3Document(path=path, manifest=manifest, project=project)
+    """Parse an LLSP3 (or LLSP) project file and return a structured document.
+
+    Both ``.llsp3`` and the older ``.llsp`` extension are supported; they use
+    the same zip-inside-zip format.
+
+    Args:
+        path: Path to the ``.llsp3`` or ``.llsp`` file.
+
+    Returns:
+        An :class:`LLSP3Document` containing the manifest and project data.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        zipfile.BadZipFile: If the file is not a valid LLSP3 archive.
+        KeyError: If required files (``manifest.json``, ``scratch.sb3``,
+            ``project.json``) are missing from the archive.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"LLSP3 file not found: {path}")
+    path_str = str(path)
+    try:
+        with zipfile.ZipFile(path_str, "r") as outer:
+            if "manifest.json" not in outer.namelist():
+                raise KeyError(f"manifest.json not found in {path.name}")
+            manifest = json.loads(outer.read("manifest.json").decode("utf-8"))
+            if "scratch.sb3" not in outer.namelist():
+                raise KeyError(f"scratch.sb3 not found in {path.name}")
+            scratch_sb3 = outer.read("scratch.sb3")
+    except zipfile.BadZipFile as exc:
+        raise zipfile.BadZipFile(f"Not a valid LLSP3 archive: {path.name}") from exc
+    try:
+        with zipfile.ZipFile(io.BytesIO(scratch_sb3), "r") as inner:
+            if "project.json" not in inner.namelist():
+                raise KeyError(f"project.json not found inside scratch.sb3 in {path.name}")
+            project = json.loads(inner.read("project.json").decode("utf-8"))
+    except zipfile.BadZipFile as exc:
+        raise zipfile.BadZipFile(f"scratch.sb3 inside {path.name} is not a valid zip") from exc
+    return LLSP3Document(path=path_str, manifest=manifest, project=project)

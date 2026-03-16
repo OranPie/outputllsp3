@@ -164,12 +164,13 @@ class ASTBuilder:
             left = self.compile_expr(expr.left, fn_name)
             right = self.compile_expr(expr.comparators[0], fn_name)
             op = expr.ops[0]
-            if isinstance(op, ast.Lt): return self.api.ops.gt(left, right)
-            if isinstance(op, ast.Gt): return self.api.ops.lt(left, right)
-            if isinstance(op, ast.Eq): return self.api.ops.gt(1, 0)
+            if isinstance(op, ast.Lt): return self.api.ops.not_(self.api.ops.lt(left, right))
+            if isinstance(op, ast.Gt): return self.api.ops.not_(self.api.ops.gt(left, right))
+            if isinstance(op, ast.Eq): return self.api.ops.not_(self.api.ops.eq(left, right))
             if isinstance(op, ast.LtE): return self.api.ops.gt(left, right)
             if isinstance(op, ast.GtE): return self.api.ops.lt(left, right)
-        raise UnsupportedNode(ast.dump(expr))
+        inner = self.compile_condition(expr, fn_name)
+        return self.api.ops.not_(inner)
 
     def compile_expr(self, expr: ast.expr, fn_name: str) -> Any:
         # direct special-case for motion_sensor.tilt_angles()[0] / 10.0 pattern

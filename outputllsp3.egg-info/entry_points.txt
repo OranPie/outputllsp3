@@ -1,3 +1,0 @@
-[console_scripts]
-outputllsp3 = outputllsp3.cli:main
-

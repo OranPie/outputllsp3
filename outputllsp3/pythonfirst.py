@@ -218,15 +218,6 @@ class PythonFirstContext:
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
             v = self.const_eval(expr.operand)
             return -v if isinstance(v, (int, float)) else None
-        if isinstance(expr, ast.BoolOp) and expr.values:
-            compiled = [self.compile_condition(v, fn_name, params) for v in expr.values]
-            acc = compiled[0]
-            for other in compiled[1:]:
-                if isinstance(expr.op, ast.And):
-                    acc = self.api.ops.and_(acc, other)
-                elif isinstance(expr.op, ast.Or):
-                    acc = self.api.ops.or_(acc, other)
-            return acc
         if isinstance(expr, ast.BinOp):
             a = self.const_eval(expr.left)
             b = self.const_eval(expr.right)
@@ -380,18 +371,18 @@ class PythonFirstContext:
             right_node = expr.comparators[0]
             right = self.compile_expr(right_node, fn_name, params)
             op = expr.ops[0]
-            if isinstance(op, ast.Lt): return self.api.ops.gt(left, right)
-            if isinstance(op, ast.Gt): return self.api.ops.lt(left, right)
-            if isinstance(op, ast.Eq): return self.api.ops.or_(self.api.ops.lt(left, right), self.api.ops.gt(left, right))
+            if isinstance(op, ast.Lt): return self.api.ops.not_(self.api.ops.lt(left, right))
+            if isinstance(op, ast.Gt): return self.api.ops.not_(self.api.ops.gt(left, right))
+            if isinstance(op, ast.Eq): return self.api.ops.not_(self.api.ops.eq(left, right))
             if isinstance(op, ast.LtE): return self.api.ops.gt(left, right)
             if isinstance(op, ast.GtE): return self.api.ops.lt(left, right)
             if isinstance(op, ast.In) and isinstance(right_node, ast.Name) and right_node.id in self.list_decls:
                 contains = self.api.lists.contains(self.list_decls[right_node.id], left)
-                return self.api.ops.eq(contains, 0)
+                return self.api.ops.not_(contains)
             if isinstance(op, ast.NotIn) and isinstance(right_node, ast.Name) and right_node.id in self.list_decls:
                 return self.api.lists.contains(self.list_decls[right_node.id], left)
-        value = self.compile_expr(expr, fn_name, params)
-        return self.api.ops.eq(value, 0)
+        inner = self.compile_condition(expr, fn_name, params)
+        return self.api.ops.not_(inner)
 
     # ---------- statements ----------
 

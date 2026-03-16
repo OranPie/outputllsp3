@@ -43,6 +43,7 @@ __all__ = [
     'SchemaRegistry',
     'bundled_schema',
     'robot', 'run', 'port', 'ls', 'transpile_pythonfirst_file', 'reset_pythonfirst_registry',
+    'export_llsp3_to_python',
 ]
 
 from .metadata import package_info
