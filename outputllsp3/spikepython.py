@@ -1,3 +1,21 @@
+"""SPIKE Python library facade for the AST-based transpiler.
+
+``SpikePythonAPI`` exposes the subset of the official SPIKE Python API that
+the AST transpiler understands and translates to Scratch blocks.  It mirrors
+the module/function hierarchy used in real SPIKE hub programs::
+
+    from spike import hub, motor, motor_pair, app
+
+Sub-APIs
+--------
+- ``HubAPI``         – hub.light, hub.speaker, hub.battery, hub.motion_sensor
+- ``ButtonAPI``      – hub.left_button, hub.right_button, hub.center_button
+- ``SoundAPI``       – app.sound helpers
+- ``LightMatrixAPI`` – hub.light_matrix (show_image, set_pixel, …)
+- ``MotorAPI``       – motor.run, motor.stop, motor.get_position, …
+- ``MotorPairAPI``   – motor_pair.move, motor_pair.stop, …
+- ``SpikePythonAPI`` – top-level aggregate (``hub``, ``motor``, ``motor_pair``)
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,3 +1,20 @@
+"""Safe enum wrappers for SPIKE hardware constants (ports, motor pairs, buttons, etc.).
+
+All enums inherit from ``StrEnum`` so they stringify cleanly to their value when
+embedded in block mutation JSON without any extra ``str()`` conversion.
+
+Public API
+----------
+- ``MotorPair``  – ordered two-port pair used by drive-base blocks (``AB``, ``BA``, …)
+- ``MotorPort``  – single port letter (``A`` – ``F``)
+- ``Port``       – alias for ``MotorPort``
+- ``Button``     – hub button identifiers (``LEFT``, ``CENTER``, ``RIGHT``)
+- ``MotorPairId`` – logical pair index (``PAIR_1``)
+- ``OrientationAxis`` – IMU axis names (``yaw``, ``pitch``, ``roll``)
+- ``LightImage`` – built-in 5×5 light-matrix images
+- ``ColorValue`` – named color identifiers
+- ``ENUMS``      – frozen namespace collecting all enum classes for legacy ``build(…, enums)`` call
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

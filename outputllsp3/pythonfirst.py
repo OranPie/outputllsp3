@@ -1,3 +1,48 @@
+"""Python-first decorator-based transpiler.
+
+The *python-first* mode lets authors write LEGO SPIKE programs in idiomatic
+Python using a small set of decorators and runtime helpers, then compiles them
+directly to ``.llsp3`` projects:
+
+.. code-block:: python
+
+    from outputllsp3 import robot, run, port, ls
+
+    @robot.proc
+    def move_square(side=20, speed=420):
+        for _ in range(4):
+            robot.forward_cm(side, speed)
+            robot.turn_deg(90, 260)
+
+    @run.main
+    def main():
+        robot.use_pair(port.B, port.A)
+        move_square()          # all defaults
+        move_square(30)        # override side
+
+Supported constructs
+--------------------
+- ``@robot.proc`` / ``@run.main`` decorator-based function definitions
+- Default parameter values and keyword arguments at call sites
+- Return values from ``@robot.proc`` functions
+- ``for _ in range(n)`` loops (constant and variable counts)
+- ``while`` with ``break`` / ``continue`` / ``else``
+- ``if`` / ``elif`` / ``else``
+- Arithmetic, comparison, boolean operators
+- List operations (``ls.list``, ``.append``, ``.get``, ``.set``, ``.contains``, …)
+- ``robot.*`` movement helpers (forward_cm, turn_deg, pivot, stop, …)
+- ``run.sleep`` / ``run.sleep_ms``
+
+Public API
+----------
+- ``robot``  – ``@robot.proc`` decorator + movement helpers namespace
+- ``run``    – ``@run.main`` decorator + sleep helpers
+- ``port``   – port constants (``port.A`` … ``port.F``)
+- ``ls``     – list declaration helper (``ls.list(name)``)
+- ``transpile_pythonfirst_file(path, …)`` – compile and save ``.llsp3``
+- ``reset_pythonfirst_registry()`` – clear the global proc registry (useful
+  for testing multiple programs in the same process)
+"""
 from __future__ import annotations
 
 import ast
@@ -127,6 +172,24 @@ class LoopContext:
     break_var: str
     continue_var: str | None = None
 
+
+@dataclass
+class ReturnContext:
+    """Tracks return-value machinery for a compiled procedure.
+
+    Each ``@robot.proc`` that contains at least one ``return value`` statement
+    gets a pair of raw (unnamespaced) Scratch variables:
+
+    * ``flag_var``  – ``__return_<proc_name>``  – set to 1 when ``return`` is hit;
+      guards all subsequent statements so they are skipped.
+    * ``retval_var`` – ``__retval_<proc_name>`` – holds the returned value and
+      can be read by the caller immediately after the procedure call.
+    """
+    fn_name: str
+    flag_var: str
+    retval_var: str
+
+
 @dataclass
 class PythonFirstContext:
     project: LLSP3Project
@@ -139,6 +202,12 @@ class PythonFirstContext:
         self.list_decls: dict[str, str] = {}
         self.proc_defs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        # Maps proc name → ReturnContext for procs that use ``return value``.
+        self.proc_return_vars: dict[str, ReturnContext] = {}
+        # Maps proc name → ordered list of param names.
+        self.proc_params: dict[str, list[str]] = {}
+        # Maps proc name → {param_name: default_value} for params that have defaults.
+        self.proc_defaults: dict[str, dict[str, Any]] = {}
         self.runtime_config = {
             "motor_pair": "AB",
             "left_dir": 1,
@@ -151,6 +220,84 @@ class PythonFirstContext:
         self.notes.append(f"L{line}: {msg}")
 
     # ---------- top-level analysis ----------
+
+    @staticmethod
+    def _fn_has_return_value(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        """Return True if *fn* contains at least one ``return <value>`` statement."""
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Return) and node.value is not None:
+                return True
+        return False
+
+    def _extract_fn_defaults(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Any]:
+        """Return ``{param_name: const_value}`` for params that have default values.
+
+        Defaults for all params are extracted from the AST.  Non-constant defaults
+        (e.g. a function call) are const-evaluated; if evaluation fails the default
+        is reported as a compile note and set to ``0`` so the build still succeeds.
+        """
+        args = fn.args.args
+        defaults = fn.args.defaults  # last len(defaults) params
+        n = len(args)
+        m = len(defaults)
+        result: dict[str, Any] = {}
+        for i, default_node in enumerate(defaults):
+            param_name = args[n - m + i].arg
+            v = self.const_eval(default_node)
+            if v is not None:
+                result[param_name] = v
+            else:
+                self.note(
+                    f'non-constant default for param {param_name!r} in {fn.name!r}; using 0',
+                    default_node,
+                )
+                result[param_name] = 0
+        return result
+
+    def _fill_proc_args(self, proc_name: str, call: ast.Call, fn_name: str, params: set[str]) -> list[Any]:
+        """Build the full ordered argument list for a call to *proc_name*.
+
+        Handles three cases:
+        * Positional args provided – used as-is.
+        * Keyword args (``my_proc(speed=300)``) – matched to the declared parameter order.
+        * Missing positional args – filled in from the proc's default values.
+
+        If no parameter metadata is available (proc defined elsewhere / built-in) the
+        raw positional arg list is returned unchanged.
+        """
+        param_list = self.proc_params.get(proc_name)
+        if param_list is None:
+            # No metadata: just compile the positional args
+            return [self.compile_expr(a, fn_name, params) for a in call.args]
+
+        defaults_map = self.proc_defaults.get(proc_name, {})
+        filled: dict[int, Any] = {}
+
+        # Positional args
+        for i, arg in enumerate(call.args):
+            filled[i] = self.compile_expr(arg, fn_name, params)
+
+        # Keyword args – match by parameter name
+        for kw in call.keywords:
+            if kw.arg in param_list:
+                idx = param_list.index(kw.arg)
+                filled[idx] = self.compile_expr(kw.value, fn_name, params)
+            elif kw.arg:
+                self.note(f'unknown keyword arg {kw.arg!r} in call to {proc_name!r}; skipped', call)
+
+        # Build the ordered result, filling defaults for any missing positions
+        result: list[Any] = []
+        for i, p in enumerate(param_list):
+            if i in filled:
+                result.append(filled[i])
+            elif p in defaults_map:
+                result.append(defaults_map[p])
+            else:
+                self.note(
+                    f'missing required arg {p!r} in call to {proc_name!r} (no default); using 0', call
+                )
+                result.append(0)
+        return result
 
     def analyze(self, tree: ast.Module) -> None:
         for node in tree.body:
@@ -187,8 +334,25 @@ class PythonFirstContext:
         idx = 0
         for fn in self.proc_defs:
             params = [a.arg for a in fn.args.args]
-            body = self.compile_body(fn.body, fn_name=fn.name, params=set(params))
-            self.api.flow.procedure(fn.name, params, *body, x=700, y=160 + idx * 230)
+            # Collect default values for each parameter.
+            defaults_map = self._extract_fn_defaults(fn)
+            defaults_list = [defaults_map.get(p, "") for p in params]
+            self.proc_params[fn.name] = params
+            if defaults_map:
+                self.proc_defaults[fn.name] = defaults_map
+            return_ctx: ReturnContext | None = None
+            init_blocks: list[str] = []
+            if self._fn_has_return_value(fn):
+                flag_var = f"__return_{fn.name}"
+                retval_var = f"__retval_{fn.name}"
+                self.api.vars.ensure(flag_var, 0, raw=True)
+                self.api.vars.ensure(retval_var, 0, raw=True)
+                return_ctx = ReturnContext(fn_name=fn.name, flag_var=flag_var, retval_var=retval_var)
+                self.proc_return_vars[fn.name] = return_ctx
+                # Reset flag at the start of each call so it doesn't carry over.
+                init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
+            body = self.compile_body(fn.body, fn_name=fn.name, params=set(params), return_ctx=return_ctx)
+            self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, x=700, y=160 + idx * 230)
             idx += 1
 
         if self.main_def is None:
@@ -218,15 +382,26 @@ class PythonFirstContext:
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
             v = self.const_eval(expr.operand)
             return -v if isinstance(v, (int, float)) else None
-        if isinstance(expr, ast.BoolOp) and expr.values:
-            compiled = [self.compile_condition(v, fn_name, params) for v in expr.values]
-            acc = compiled[0]
-            for other in compiled[1:]:
-                if isinstance(expr.op, ast.And):
-                    acc = self.api.ops.and_(acc, other)
-                elif isinstance(expr.op, ast.Or):
-                    acc = self.api.ops.or_(acc, other)
-            return acc
+        if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
+            v = self.const_eval(expr.operand)
+            return not v if v is not None else None
+        if isinstance(expr, ast.BoolOp):
+            # Evaluate constant-only BoolOp (e.g. ``True and False``) without
+            # generating any blocks.  If any operand is non-constant, bail out.
+            vals = [self.const_eval(v) for v in expr.values]
+            if any(v is None for v in vals):
+                return None
+            if isinstance(expr.op, ast.And):
+                result: Any = True
+                for v in vals:
+                    result = result and v
+                return result
+            if isinstance(expr.op, ast.Or):
+                result = False
+                for v in vals:
+                    result = result or v
+                return result
+            return None
         if isinstance(expr, ast.BinOp):
             a = self.const_eval(expr.left)
             b = self.const_eval(expr.right)
@@ -308,7 +483,19 @@ class PythonFirstContext:
                     one_based = self.api.ops.add(index_expr, 1)
                     return self.api.lists.item(self.list_decls[base], one_based)
             if isinstance(expr.func, ast.Name):
-                return self.api.flow.call(expr.func.id, *[self.compile_expr(a, fn_name, params) for a in expr.args])
+                # Proc call used as an expression value: return the unique return variable.
+                # The call must have been executed (as a statement) before this expression
+                # is evaluated for the retval to be current.
+                proc_name = expr.func.id
+                if proc_name in self.proc_return_vars:
+                    self.note(
+                        f'proc call {proc_name}() used inside an expression; '
+                        f'reads __retval_{proc_name} which was set by the last call',
+                        expr,
+                    )
+                    return self.api.vars.get(self.proc_return_vars[proc_name].retval_var, raw=True)
+                full_args = self._fill_proc_args(proc_name, expr, fn_name, params)
+                return self.api.flow.call(proc_name, *full_args)
         if isinstance(expr, ast.BoolOp) and expr.values:
             compiled = [self.compile_condition(v, fn_name, params) for v in expr.values]
             acc = compiled[0]
@@ -380,32 +567,54 @@ class PythonFirstContext:
             right_node = expr.comparators[0]
             right = self.compile_expr(right_node, fn_name, params)
             op = expr.ops[0]
-            if isinstance(op, ast.Lt): return self.api.ops.gt(left, right)
-            if isinstance(op, ast.Gt): return self.api.ops.lt(left, right)
-            if isinstance(op, ast.Eq): return self.api.ops.or_(self.api.ops.lt(left, right), self.api.ops.gt(left, right))
+            if isinstance(op, ast.Lt): return self.api.ops.not_(self.api.ops.lt(left, right))
+            if isinstance(op, ast.Gt): return self.api.ops.not_(self.api.ops.gt(left, right))
+            if isinstance(op, ast.Eq): return self.api.ops.not_(self.api.ops.eq(left, right))
             if isinstance(op, ast.LtE): return self.api.ops.gt(left, right)
             if isinstance(op, ast.GtE): return self.api.ops.lt(left, right)
             if isinstance(op, ast.In) and isinstance(right_node, ast.Name) and right_node.id in self.list_decls:
                 contains = self.api.lists.contains(self.list_decls[right_node.id], left)
-                return self.api.ops.eq(contains, 0)
+                return self.api.ops.not_(contains)
             if isinstance(op, ast.NotIn) and isinstance(right_node, ast.Name) and right_node.id in self.list_decls:
                 return self.api.lists.contains(self.list_decls[right_node.id], left)
-        value = self.compile_expr(expr, fn_name, params)
-        return self.api.ops.eq(value, 0)
+        inner = self.compile_condition(expr, fn_name, params)
+        return self.api.ops.not_(inner)
 
     # ---------- statements ----------
 
-    def compile_body(self, body: list[ast.stmt], fn_name: str, params: set[str], loop_ctx: LoopContext | None = None) -> list[str]:
+    def compile_body(self, body: list[ast.stmt], fn_name: str, params: set[str],
+                     loop_ctx: LoopContext | None = None,
+                     return_ctx: ReturnContext | None = None) -> list[str]:
         out: list[str] = []
         for stmt in body:
-            compiled = self.compile_stmt(stmt, fn_name, params, loop_ctx=loop_ctx)
-            if loop_ctx is None:
+            compiled = self.compile_stmt(stmt, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
+            if loop_ctx is None and return_ctx is None:
                 out.extend(compiled)
             else:
-                # Continue/break semantics: after either flag is set, skip the rest of the user body.
                 for blk in compiled:
-                    out.append(self.api.flow.if_(self.loop_guard(loop_ctx), blk))
+                    # Create a fresh guard for each block – Scratch blocks can only have one parent.
+                    guard = self._execution_guard(loop_ctx, return_ctx)
+                    out.append(self.api.flow.if_(guard, blk))
         return out
+
+    def _execution_guard(self, loop_ctx: LoopContext | None, return_ctx: ReturnContext | None) -> str:
+        """Build a boolean condition that is True only when execution should proceed.
+
+        Combines the loop break/continue guard with the function return guard so
+        that a single ``control_if`` wraps each statement.
+        """
+        guards: list[str] = []
+        if loop_ctx is not None:
+            guards.append(self.loop_guard(loop_ctx))
+        if return_ctx is not None:
+            r = self.api.vars.get(return_ctx.flag_var, raw=True)
+            guards.append(self.api.ops.eq(r, 0))
+        if not guards:
+            raise RuntimeError("_execution_guard called with no context")
+        result = guards[0]
+        for g in guards[1:]:
+            result = self.api.ops.and_(result, g)
+        return result
 
     def loop_guard(self, loop_ctx: LoopContext) -> str:
         b = self.api.vars.get(loop_ctx.break_var, namespace=loop_ctx.fn_name)
@@ -461,7 +670,9 @@ class PythonFirstContext:
             ]
         return None
 
-    def compile_stmt(self, stmt: ast.stmt, fn_name: str, params: set[str], loop_ctx: LoopContext | None = None) -> list[str]:
+    def compile_stmt(self, stmt: ast.stmt, fn_name: str, params: set[str],
+                     loop_ctx: LoopContext | None = None,
+                     return_ctx: ReturnContext | None = None) -> list[str]:
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             special = self._compile_list_side_effect(stmt.value, fn_name, params)
             if special is not None:
@@ -470,6 +681,21 @@ class PythonFirstContext:
             target_node = stmt.targets[0]
             if isinstance(target_node, ast.Name):
                 target = target_node.id
+                # Direct assignment from a proc call with return value: result = my_proc(args)
+                if (isinstance(stmt.value, ast.Call) and
+                        isinstance(stmt.value.func, ast.Name) and
+                        stmt.value.func.id in self.proc_return_vars):
+                    proc_name = stmt.value.func.id
+                    rctx = self.proc_return_vars[proc_name]
+                    full_args = self._fill_proc_args(proc_name, stmt.value, fn_name, params)
+                    call_blk = self.api.flow.call(proc_name, *full_args)
+                    self.api.vars.ensure(target, 0, namespace=fn_name)
+                    assign_blk = self.api.vars.set(
+                        target,
+                        self.api.vars.get(rctx.retval_var, raw=True),
+                        namespace=fn_name,
+                    )
+                    return [call_blk, assign_blk]
                 # top-level list declaration inside function is not supported, but keep note
                 if self._is_ls_list_call(stmt.value):
                     lname = self._extract_list_name(stmt.value, target)
@@ -497,11 +723,11 @@ class PythonFirstContext:
 
         if isinstance(stmt, ast.If):
             cond = self.compile_condition(stmt.test, fn_name, params)
-            body = self.compile_body(stmt.body, fn_name, params, loop_ctx=loop_ctx)
+            body = self.compile_body(stmt.body, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
             out = [self.api.flow.if_(cond, *body)] if body else []
             if stmt.orelse:
                 else_cond = self.negate_condition(stmt.test, fn_name, params)
-                else_body = self.compile_body(stmt.orelse, fn_name, params, loop_ctx=loop_ctx)
+                else_body = self.compile_body(stmt.orelse, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
                 if else_body:
                     out.append(self.api.flow.if_(else_cond, *else_body))
             return out
@@ -517,7 +743,7 @@ class PythonFirstContext:
                 self.api.vars.set(cont_var, 0, namespace=fn_name),
             ]
             body_blocks = [self.api.vars.set(cont_var, 0, namespace=fn_name)]
-            body_blocks.extend(self.compile_body(stmt.body, fn_name, params, loop_ctx=wctx))
+            body_blocks.extend(self.compile_body(stmt.body, fn_name, params, loop_ctx=wctx, return_ctx=return_ctx))
             if isinstance(stmt.test, ast.Constant) and stmt.test.value is True:
                 end_cond = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 1)
             else:
@@ -527,7 +753,7 @@ class PythonFirstContext:
                 )
             out = [*init_blocks, self.api.flow.repeat_until(end_cond, *body_blocks)]
             if stmt.orelse:
-                else_body = self.compile_body(stmt.orelse, fn_name, params)
+                else_body = self.compile_body(stmt.orelse, fn_name, params, return_ctx=return_ctx)
                 if else_body:
                     out.append(self.api.flow.if_(self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0), *else_body))
             return out
@@ -551,7 +777,7 @@ class PythonFirstContext:
                     self.api.vars.ensure(loop_var, 0, namespace=fn_name)
                     one_based = self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1)
                     body_blocks.append(self.api.vars.set(loop_var, self.api.lists.item(self.list_decls[stmt.iter.id], one_based), namespace=fn_name))
-                body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx))
+                body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx, return_ctx=return_ctx))
                 inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
                 body_blocks.append(self.api.flow.if_(inc_guard, self.api.vars.set(index_name, self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1), namespace=fn_name)))
                 cond = self.api.ops.or_(self.api.ops.gt(self.api.vars.get(index_name, namespace=fn_name), self.api.ops.sub(self.api.lists.length(self.list_decls[stmt.iter.id]), 1)), self.api.vars.get(break_var, namespace=fn_name))
@@ -571,12 +797,12 @@ class PythonFirstContext:
                     self.api.vars.ensure(item_target, 0, namespace=fn_name)
                     one_based = self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1)
                     body_blocks.append(self.api.vars.set(item_target, self.api.lists.item(self.list_decls[stmt.iter.args[0].id], one_based), namespace=fn_name))
-                body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx))
+                body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx, return_ctx=return_ctx))
                 inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
                 body_blocks.append(self.api.flow.if_(inc_guard, self.api.vars.set(index_name, self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1), namespace=fn_name)))
                 cond = self.api.ops.or_(self.api.ops.gt(self.api.vars.get(index_name, namespace=fn_name), self.api.ops.sub(self.api.lists.length(self.list_decls[stmt.iter.args[0].id]), 1)), self.api.vars.get(break_var, namespace=fn_name))
                 return [*init_blocks, self.api.flow.repeat_until(cond, *body_blocks)]
-            range_lowered = self._compile_for_range_loop(stmt, fn_name, params, lctx, break_var, cont_var, init_blocks)
+            range_lowered = self._compile_for_range_loop(stmt, fn_name, params, lctx, break_var, cont_var, init_blocks, return_ctx=return_ctx)
             if range_lowered is not None:
                 return range_lowered
             self.note('only for range(...) is supported in python-first mode', stmt)
@@ -606,7 +832,19 @@ class PythonFirstContext:
             return out
 
         if isinstance(stmt, ast.Return):
-            return []
+            if return_ctx is None:
+                # return outside a proc with return value: no-op
+                return []
+            blocks: list[str] = []
+            if stmt.value is not None:
+                blocks.append(self.api.vars.set(return_ctx.retval_var,
+                                                self.compile_expr(stmt.value, fn_name, params),
+                                                raw=True))
+            blocks.append(self.api.vars.set(return_ctx.flag_var, 1, raw=True))
+            # When inside a loop, also set the loop break flag to exit the loop early.
+            if loop_ctx is not None:
+                blocks.append(self.api.vars.set(loop_ctx.break_var, 1, namespace=loop_ctx.fn_name))
+            return blocks
 
         self.note(f'unsupported stmt skipped: {type(stmt).__name__}', stmt)
         return []
@@ -653,7 +891,8 @@ class PythonFirstContext:
         return times, init_blocks, loop_var, step_value
 
     def _compile_for_range_loop(self, stmt: ast.For, fn_name: str, params: set[str], lctx: LoopContext,
-                                break_var: str, cont_var: str, init_blocks: list[str]) -> list[str] | None:
+                                break_var: str, cont_var: str, init_blocks: list[str],
+                                return_ctx: ReturnContext | None = None) -> list[str] | None:
         if not (isinstance(stmt.iter, ast.Call) and self.attr_name(stmt.iter.func) == 'range'):
             return None
         args = stmt.iter.args
@@ -690,7 +929,7 @@ class PythonFirstContext:
 
         body_params = params | {loop_var}
         body_blocks = [self.api.vars.set(cont_var, 0, namespace=fn_name)]
-        body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx))
+        body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx, return_ctx=return_ctx))
         inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
         body_blocks.append(self.api.flow.if_(inc_guard, self.api.vars.set(loop_var, self.api.ops.add(self.api.vars.get(loop_var, namespace=fn_name), step_const), namespace=fn_name)))
 
@@ -787,7 +1026,9 @@ class PythonFirstContext:
 
         # procedure call
         if isinstance(call.func, ast.Name):
-            return self.api.flow.call(call.func.id, *args)
+            proc_name = call.func.id
+            full_args = self._fill_proc_args(proc_name, call, fn_name, params)
+            return self.api.flow.call(proc_name, *full_args)
 
         self.note(f'unsupported call lowered to no-op: {name}', call)
         return self.api.wait.seconds(0)

@@ -1,3 +1,16 @@
+"""Block-template registry built from a Scratch ``strings.json`` definitions file.
+
+The catalog maps Scratch opcodes to human-readable labels and menu definitions.
+It is used primarily for documentation helpers and the strict-verified opcode
+mode; normal code generation does not require it.
+
+Public API
+----------
+- ``BlockTemplate``  – dataclass holding the opcode, label, and argument slots
+  for one block type.
+- ``BlockCatalog(strings_path)``  – loads ``strings.json`` and builds the
+  registry; exposes ``get(opcode)``, ``to_dict()``, and ``__iter__()``.
+"""
 from __future__ import annotations
 
 import json

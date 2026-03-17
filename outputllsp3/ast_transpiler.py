@@ -1,3 +1,26 @@
+"""Python AST → Scratch blocks transpiler (``build-ast`` mode).
+
+The AST transpiler compiles real Python source files (written in a subset of
+Python that mirrors the SPIKE micropython API) directly to LLSP3 projects by
+walking the Python AST and lowering each construct to the equivalent Scratch
+block graph.
+
+Supported constructs
+--------------------
+- Top-level constants (``x = 42``) → Scratch variables
+- Functions / async functions → custom Scratch procedures
+- Default parameter values for procedures
+- Return values via ``__retval_*`` / ``__return_*`` variable pairs
+- ``if`` / ``while True`` with break / ``for`` (limited)
+- Arithmetic, comparison, boolean operators
+- ``runloop.run(main())`` and bare ``main()`` as program-start triggers
+- Common SPIKE API calls: ``runloop.sleep_ms``, ``motor.*``, ``motion_sensor.*``
+
+Entry points
+------------
+- ``transpile_python_source(path, …)`` – compile a single Python source file
+  and write an ``.llsp3`` project.
+"""
 from __future__ import annotations
 
 import ast
@@ -21,6 +44,71 @@ class ASTBuilder:
         self.mod_name = self.source_path.stem
         self.const_env: dict[str, Any] = {"math.pi": 3.141592653589793}
         self.notes: list[str] = []
+        # Maps function name → (flag_var, retval_var) for functions with return values.
+        self.func_return_vars: dict[str, tuple[str, str]] = {}
+        # Maps function name → ordered list of param names.
+        self.func_params: dict[str, list[str]] = {}
+        # Maps function name → {param_name: default_value} for params with defaults.
+        self.func_defaults: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _fn_has_return_value(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Return) and node.value is not None:
+                return True
+        return False
+
+    def _extract_fn_defaults(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Any]:
+        """Return ``{param_name: const_value}`` for params that have default values."""
+        args = fn.args.args
+        defaults = fn.args.defaults
+        n = len(args)
+        m = len(defaults)
+        result: dict[str, Any] = {}
+        for i, default_node in enumerate(defaults):
+            param_name = args[n - m + i].arg
+            v = self.const_eval(default_node)
+            if v is not None:
+                result[param_name] = v
+            else:
+                self.note(
+                    f'non-constant default for param {param_name!r} in {fn.name!r}; using 0',
+                    default_node,
+                )
+                result[param_name] = 0
+        return result
+
+    def _fill_fn_args(self, fn_name: str, call: ast.Call, caller_fn: str) -> list[Any]:
+        """Build the full ordered argument list for a call to *fn_name*, applying defaults."""
+        param_list = self.func_params.get(fn_name)
+        if param_list is None:
+            return [self.compile_expr(a, caller_fn) for a in call.args]
+
+        defaults_map = self.func_defaults.get(fn_name, {})
+        filled: dict[int, Any] = {}
+
+        for i, arg in enumerate(call.args):
+            filled[i] = self.compile_expr(arg, caller_fn)
+
+        for kw in call.keywords:
+            if kw.arg in param_list:
+                idx = param_list.index(kw.arg)
+                filled[idx] = self.compile_expr(kw.value, caller_fn)
+            elif kw.arg:
+                self.note(f'unknown keyword arg {kw.arg!r} in call to {fn_name!r}; skipped', call)
+
+        result: list[Any] = []
+        for i, p in enumerate(param_list):
+            if i in filled:
+                result.append(filled[i])
+            elif p in defaults_map:
+                result.append(defaults_map[p])
+            else:
+                self.note(
+                    f'missing required arg {p!r} in call to {fn_name!r} (no default); using 0', call
+                )
+                result.append(0)
+        return result
 
     def note(self, msg: str, node: ast.AST | None = None) -> None:
         line = getattr(node, 'lineno', '?') if node is not None else '?'
@@ -63,10 +151,26 @@ class ASTBuilder:
 
     def compile_function(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         args = [a.arg for a in fn.args.args]
-        body_blocks = self.compile_body(fn.body, fn_name=fn.name)
-        self.api.flow.procedure(fn.name, args, *body_blocks, x=720, y=120 + len(self.project.blocks) * 4)
+        # Extract defaults
+        defaults_map = self._extract_fn_defaults(fn)
+        defaults_list = [defaults_map.get(p, "") for p in args]
+        self.func_params[fn.name] = args
+        if defaults_map:
+            self.func_defaults[fn.name] = defaults_map
+        init_blocks: list[str] = []
+        flag_var: str | None = None
+        retval_var: str | None = None
+        if self._fn_has_return_value(fn):
+            flag_var = f"__return_{fn.name}"
+            retval_var = f"__retval_{fn.name}"
+            self.api.vars.ensure(flag_var, 0, raw=True)
+            self.api.vars.ensure(retval_var, 0, raw=True)
+            self.func_return_vars[fn.name] = (flag_var, retval_var)
+            init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
+        body_blocks = self.compile_body(fn.body, fn_name=fn.name, flag_var=flag_var)
+        self.api.flow.procedure(fn.name, args, *init_blocks, *body_blocks, defaults=defaults_list, x=720, y=120 + len(self.project.blocks) * 4)
 
-    def compile_body(self, body: list[ast.stmt], fn_name: str) -> list[str]:
+    def compile_body(self, body: list[ast.stmt], fn_name: str, flag_var: str | None = None) -> list[str]:
         out: list[str] = []
         i = 0
         while i < len(body):
@@ -86,7 +190,15 @@ class ASTBuilder:
                 out.append(self.api.move.stop())
                 i += 2
                 continue
-            out.extend(self.compile_stmt(body[i], fn_name=fn_name))
+            compiled = self.compile_stmt(body[i], fn_name=fn_name, flag_var=flag_var)
+            if flag_var is None:
+                out.extend(compiled)
+            else:
+                # Guard each statement: skip it if return flag is already set.
+                # Create a fresh condition block for each guard – Scratch blocks can only have one parent.
+                for blk in compiled:
+                    guard = self.api.ops.eq(self.api.vars.get(flag_var, raw=True), 0)
+                    out.append(self.api.flow.if_(guard, blk))
             i += 1
         return out
 
@@ -103,10 +215,21 @@ class ASTBuilder:
         except Exception:
             return False
 
-    def compile_stmt(self, stmt: ast.stmt, fn_name: str) -> list[str]:
+    def compile_stmt(self, stmt: ast.stmt, fn_name: str, flag_var: str | None = None) -> list[str]:
         api = self.api
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
             name = stmt.targets[0].id
+            # Direct assignment from a function with return value: result = my_fn(args)
+            if (isinstance(stmt.value, ast.Call) and
+                    isinstance(stmt.value.func, ast.Name) and
+                    stmt.value.func.id in self.func_return_vars):
+                fn_called = stmt.value.func.id
+                _, retval_var = self.func_return_vars[fn_called]
+                full_args = self._fill_fn_args(fn_called, stmt.value, fn_name)
+                call_blk = api.flow.call(fn_called, *full_args)
+                api.vars.add(name, 0, namespace=fn_name)
+                assign_blk = api.vars.set(name, api.vars.get(retval_var, raw=True), namespace=fn_name)
+                return [call_blk, assign_blk]
             api.vars.add(name, 0, namespace=fn_name)
             return [api.vars.set(name, self.compile_expr(stmt.value, fn_name), namespace=fn_name)]
         if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
@@ -124,7 +247,7 @@ class ASTBuilder:
                 return [self.compile_call(stmt.value.value, fn_name)]
         if isinstance(stmt, ast.If):
             cond = self.compile_condition(stmt.test, fn_name)
-            body = self.compile_body(stmt.body, fn_name)
+            body = self.compile_body(stmt.body, fn_name, flag_var=flag_var)
             out = [api.flow.if_(cond, *body)] if body else []
             if stmt.orelse:
                 self.note('else branch skipped (not yet lowered)', stmt)
@@ -139,9 +262,16 @@ class ASTBuilder:
                 # fallback: loop until impossible false, preserve body structure
                 cond = self.api.ops.eq(1, 0)
                 self.note('while True without top break guard lowered as repeat-until(false)', stmt)
-            return [api.flow.repeat_until(cond, *self.compile_body(rest, fn_name))]
+            return [api.flow.repeat_until(cond, *self.compile_body(rest, fn_name, flag_var=flag_var))]
         if isinstance(stmt, ast.Return):
-            return []
+            if fn_name not in self.func_return_vars:
+                return []
+            fv, rv = self.func_return_vars[fn_name]
+            blocks: list[str] = []
+            if stmt.value is not None:
+                blocks.append(api.vars.set(rv, self.compile_expr(stmt.value, fn_name), raw=True))
+            blocks.append(api.vars.set(fv, 1, raw=True))
+            return blocks
         self.note(f'unsupported stmt skipped: {type(stmt).__name__}', stmt)
         return []
 
@@ -164,12 +294,13 @@ class ASTBuilder:
             left = self.compile_expr(expr.left, fn_name)
             right = self.compile_expr(expr.comparators[0], fn_name)
             op = expr.ops[0]
-            if isinstance(op, ast.Lt): return self.api.ops.gt(left, right)
-            if isinstance(op, ast.Gt): return self.api.ops.lt(left, right)
-            if isinstance(op, ast.Eq): return self.api.ops.gt(1, 0)
+            if isinstance(op, ast.Lt): return self.api.ops.not_(self.api.ops.lt(left, right))
+            if isinstance(op, ast.Gt): return self.api.ops.not_(self.api.ops.gt(left, right))
+            if isinstance(op, ast.Eq): return self.api.ops.not_(self.api.ops.eq(left, right))
             if isinstance(op, ast.LtE): return self.api.ops.gt(left, right)
             if isinstance(op, ast.GtE): return self.api.ops.lt(left, right)
-        raise UnsupportedNode(ast.dump(expr))
+        inner = self.compile_condition(expr, fn_name)
+        return self.api.ops.not_(inner)
 
     def compile_expr(self, expr: ast.expr, fn_name: str) -> Any:
         # direct special-case for motion_sensor.tilt_angles()[0] / 10.0 pattern
@@ -214,7 +345,9 @@ class ASTBuilder:
             if name == 'abs_avg_motor_deg':
                 return self.api.ops.div(self.api.ops.add(self.api.ops.abs(self.api.motor.relative_position('A')), self.api.ops.abs(self.api.motor.relative_position('B'))), 2)
             if isinstance(expr.func, ast.Name):
-                return self.api.flow.call(expr.func.id, *[self.compile_expr(a, fn_name) for a in expr.args])
+                fn_called = expr.func.id
+                full_args = self._fill_fn_args(fn_called, expr, fn_name)
+                return self.api.flow.call(fn_called, *full_args)
         if self._is_tilt_angles_index_zero(expr):
             return self.api.sensor.angle()
         if isinstance(expr, ast.Attribute):
@@ -253,7 +386,9 @@ class ASTBuilder:
                 return self.api.move.stop()
             return self.api.wait.seconds(0.0)
         if isinstance(call.func, ast.Name):
-            return self.api.flow.call(call.func.id, *args)
+            fn_called = call.func.id
+            full_args = self._fill_fn_args(fn_called, call, fn_name)
+            return self.api.flow.call(fn_called, *full_args)
         self.note(f'unsupported call lowered to no-op: {name}', call)
         return self.api.wait.seconds(0.0)
 

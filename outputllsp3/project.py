@@ -1,3 +1,36 @@
+"""Low-level LLSP3 project builder and serialiser.
+
+``LLSP3Project`` is the central object of the package.  It holds the in-memory
+representation of a Scratch project (blocks, variables, lists, procedures,
+assets) and provides the full block-creation API used by every transpiler.
+
+Typical usage::
+
+    project = LLSP3Project('ok.llsp3', 'strings.json')
+    api = API(project)
+    api.flow.start(api.move.forward_cm(20))
+    project.save('out.llsp3')
+
+Architecture
+------------
+- **Block creation** – ``add_block()`` generates a unique ID, registers the
+  block in ``self.blocks``, and wires parent / next / input pointers.
+- **Variables & lists** – ``add_variable()`` / ``add_list()`` declare sprite-level
+  resources; ``variable()`` / ``list_item()`` generate reporter blocks.
+- **Procedures** – ``define_procedure()`` / ``call_procedure()`` / ``arg()``
+  manage custom Scratch procedures including default-value mutation fields.
+- **Validation** – when ``set_strict_verified(True)`` all opcodes are checked
+  against the bundled schema; additional structural checks run on ``save()``.
+- **Serialisation** – ``save()`` rebuilds the llsp3 ZIP from the template,
+  normalises asset hashes, injects generated ``project.json``, and writes to
+  the target path.
+
+Public API
+----------
+``LLSP3Project``, ``add_block``, ``add_variable``, ``add_list``,
+``define_procedure``, ``call_procedure``, ``arg``, ``chain``,
+``set_strict_verified``, ``save``, ``cleanup``
+"""
 from __future__ import annotations
 
 import json
@@ -390,7 +423,7 @@ class LLSP3Project:
     def start_dual_power(self, left: Any, right: Any) -> str: return self.add_block("flippermoremove_startDualPower", inputs={"LEFT": self._num_input(left), "RIGHT": self._num_input(right)})
     def stop_moving(self) -> str: return self.add_block("flippermove_stopMove")
 
-    def define_procedure(self, name: str, args: list[str], *, x: int, y: int) -> str:
+    def define_procedure(self, name: str, args: list[str], *, x: int, y: int, defaults: list[Any] | None = None) -> str:
         defid = self._id("def")
         argids = [self._id("arg") for _ in args]
         protoid = self._id("proto")
@@ -398,13 +431,22 @@ class LLSP3Project:
         for aid, aname in zip(argids, args):
             rep = self.add_block("argument_reporter_string_number", parent=protoid, fields={"VALUE": [aname, None]}, shadow=True)
             proto_inputs[aid] = self.ref_menu(rep)
+        # Build the argumentdefaults list: one string entry per param.
+        # Entries for params without a default are empty strings (Scratch convention).
+        actual_defaults: list[Any] = list(defaults) if defaults is not None else []
+        # Pad / trim to match the number of args.
+        actual_defaults = (actual_defaults + [""] * len(args))[:len(args)]
+        def _default_str(d: Any) -> str:
+            if d is None or d == "":
+                return ""
+            return str(d)
         mut = {
             "tagName": "mutation",
             "children": [],
             "proccode": name + ("" if not args else " " + " ".join(["%s"] * len(args))),
             "argumentids": json.dumps(argids),
             "argumentnames": json.dumps(args),
-            "argumentdefaults": json.dumps([""] * len(args)),
+            "argumentdefaults": json.dumps([_default_str(d) for d in actual_defaults]),
             "warp": "false",
         }
         self.blocks[protoid] = OrderedDict([
@@ -413,14 +455,21 @@ class LLSP3Project:
         self.blocks[defid] = OrderedDict([
             ("opcode", "procedures_definition"), ("next", None), ("parent", None), ("inputs", OrderedDict({"custom_block": self.ref_menu(protoid)})), ("fields", OrderedDict()), ("shadow", False), ("topLevel", True), ("x", x), ("y", y),
         ])
-        self._proc_meta[name] = {"proccode": mut["proccode"], "argids": argids}
+        self._proc_meta[name] = {"proccode": mut["proccode"], "argids": argids, "defaults": actual_defaults}
         return defid
 
     def call_procedure(self, name: str, args: list[Any] | tuple[Any, ...] = ()) -> str:
         meta = self._proc_meta[name]
+        argids = meta["argids"]
+        stored_defaults = meta.get("defaults", [""] * len(argids))
         ins = OrderedDict()
-        for aid, arg in zip(meta["argids"], args):
-            ins[aid] = self._text_input(arg)
+        for i, aid in enumerate(argids):
+            if i < len(args):
+                ins[aid] = self._text_input(args[i])
+            elif i < len(stored_defaults) and stored_defaults[i] not in ("", None):
+                # Fill missing positional arg with its stored default value.
+                ins[aid] = self._text_input(stored_defaults[i])
+            # else: no input (Scratch uses the mutation's argumentdefaults entry at runtime)
         return self.add_block("procedures_call", inputs=ins, mutation={"tagName": "mutation", "children": [], "proccode": meta["proccode"], "argumentids": json.dumps(meta["argids"]), "warp": "false"})
 
     def attach_procedure_body(self, name: str, *block_ids: str) -> str | None:

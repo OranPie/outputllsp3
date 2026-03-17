@@ -1,3 +1,19 @@
+"""Classic build-script transpiler: load a Python module and call ``build()``.
+
+This is the original transpilation path.  A *build script* is a plain Python
+module (or package) that defines a ``build(project, api, ns)`` function.
+``transpile_path`` resolves the appropriate template / strings resources,
+loads the module, calls ``build``, and saves the result.
+
+Entry points
+------------
+- ``transpile_path(path, …)``    – auto-detect file vs. package and dispatch
+- ``transpile_file(path, …)``    – compile a single ``.py`` build script
+- ``transpile_package(path, …)`` – compile a Python package (calls ``build`` in
+  ``__init__.py``, provides sub-modules as the ``ns`` namespace argument)
+- ``transpile_module(module, …)``– compile an already-imported ``ModuleType``
+- ``autodiscover(base)``         – search upward for ``ok.llsp3`` / ``strings.json``
+"""
 from __future__ import annotations
 
 import importlib
