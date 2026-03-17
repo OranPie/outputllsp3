@@ -4,8 +4,8 @@ PACKAGE_NAME = "outputllsp3"
 from .version import __version__
 
 VERSION = __version__
-UPDATED_AT = "2026-03-16"
-DOCS_UPDATED_AT = "2026-03-16"
+UPDATED_AT = "2026-03-17"
+DOCS_UPDATED_AT = "2026-03-17"
 PACKAGE_LAYOUT = {
     "core": ["catalog.py", "parser.py", "project.py", "schema.py"],
     "authoring": ["api.py", "flow.py", "wrapper.py", "spikepython.py", "enums.py"],
@@ -43,6 +43,15 @@ FEATURES = {
     ],
 }
 CHANGELOG = [
+    {"version": "0.31.0", "date": "2026-03-17", "notes": [
+        "Added custom function return value support for @robot.proc procedures in python-first mode.",
+        "Each proc that uses `return value` gets a unique `__retval_<proc>` variable (readable after the call) and a `__return_<proc>` flag that guards subsequent statements so they are skipped after return.",
+        "Direct assignment from a proc call (`result = my_proc(args)`) is automatically lowered to call + retval read.",
+        "Return inside a loop also sets the loop break flag so the loop exits immediately.",
+        "Proc calls used inside expressions (not as a direct assignment RHS) fall back to reading the retval variable from the last call, with a compile note.",
+        "Added the same return-value support to the AST transpiler (ast_transpiler.py).",
+        "Exporter (python-first style) recognises the __retval_*/__return_* patterns and emits clean `return value` and `result = proc(args)` in the decompiled output.",
+    ]},
     {"version": "0.29.0", "date": "2026-03-16", "notes": [
         "Fixed NameError in pythonfirst const_eval when a BoolOp expression appeared at module level.",
         "Fixed parent-pointer validation error when using `not (x == y)` in python-first mode (negate_condition Eq now uses not_(eq(...)) instead of a shared-reference or()).",

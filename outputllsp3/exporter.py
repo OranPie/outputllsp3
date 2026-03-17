@@ -303,6 +303,42 @@ class _PFExport:
             return f'{call_name}({", ".join(args)})'
         return f'__expr__({(op or "unknown")!r})'
 
+    def _is_return_guard_if(self, block: dict) -> bool:
+        """Return True if *block* is a ``control_if`` that guards a return flag check.
+
+        The compiled form is: ``control_if(operator_equals(data_variable(__return_*), 0), ...)``
+        """
+        if block.get('opcode') != 'control_if':
+            return False
+        cond_ref = _value_ref(block.get('inputs', {}).get('CONDITION'))
+        if not cond_ref or cond_ref not in self.blocks:
+            return False
+        eq_blk = self.blocks[cond_ref]
+        if eq_blk.get('opcode') != 'operator_equals':
+            return False
+        op1_ref = _value_ref(eq_blk.get('inputs', {}).get('OPERAND1'))
+        if not op1_ref or op1_ref not in self.blocks:
+            return False
+        var_blk = self.blocks[op1_ref]
+        if var_blk.get('opcode') != 'data_variable':
+            return False
+        var_name = var_blk.get('fields', {}).get('VARIABLE', [''])[0]
+        return var_name.startswith('__return_')
+
+    def _retval_source_proc(self, value_input) -> str | None:
+        """If *value_input* is a reference to a ``data_variable`` whose name starts
+        with ``__retval_``, return the proc-name suffix; otherwise return None."""
+        ref = _value_ref(value_input)
+        if not ref or ref not in self.blocks:
+            return None
+        blk = self.blocks[ref]
+        if blk.get('opcode') != 'data_variable':
+            return None
+        var_name = blk.get('fields', {}).get('VARIABLE', [''])[0]
+        if var_name.startswith('__retval_'):
+            return var_name[len('__retval_'):]
+        return None
+
     def render_stmt_chain(self, start_id, indent='    '):
         lines = []
         cur = start_id
@@ -310,8 +346,68 @@ class _PFExport:
         while cur and cur not in seen and cur in self.blocks:
             seen.add(cur)
             block = self.blocks[cur]
+            op = block.get('opcode')
+            flds = block.get('fields', {})
+            ins = block.get('inputs', {})
+            next_id = block.get('next')
+            next_block = self.blocks.get(next_id) if next_id else None
+
+            # ── Pattern 1: procedures_call followed by target = __retval_*  ──────
+            # Compile both as: target = proc_name(args)
+            if op == 'procedures_call' and next_block and next_block.get('opcode') == 'data_setvariableto':
+                proc_part = self._retval_source_proc(next_block.get('inputs', {}).get('VALUE'))
+                if proc_part is not None:
+                    target_raw = next_block.get('fields', {}).get('VARIABLE', ['var'])[0]
+                    target = _sanitize(target_raw, 'var')
+                    proc_call_str = self.render_expr(cur)
+                    lines.append(f'{indent}{target} = {proc_call_str}')
+                    cur = next_block.get('next')
+                    continue
+
+            # ── Pattern 2: __return_* = 0 initialiser – skip it  ────────────────
+            if op == 'data_setvariableto':
+                var_name = flds.get('VARIABLE', [''])[0]
+                if var_name.startswith('__return_'):
+                    lit = _extract_literal(ins.get('VALUE'))
+                    if str(lit) == '0':
+                        cur = next_id
+                        continue
+
+            # ── Pattern 3: return-guard control_if blocks  ───────────────────────
+            # Two consecutive guards encode  `return value`:
+            #   guard1 → SUBSTACK: __retval_X = value
+            #   guard2 → SUBSTACK: __return_X = 1
+            # A single guard whose SUBSTACK is __return_X = 1 encodes bare `return`.
+            # Any other guard: unwrap and render contents directly.
+            if self._is_return_guard_if(block):
+                substack_ref = _value_ref(ins.get('SUBSTACK'))
+                sub_blk = self.blocks.get(substack_ref) if substack_ref else None
+                if sub_blk and sub_blk.get('opcode') == 'data_setvariableto' and sub_blk.get('next') is None:
+                    sub_var = sub_blk.get('fields', {}).get('VARIABLE', [''])[0]
+                    # Sub-pattern 3a: guard holds __retval_* – check if next guard holds __return_*
+                    if sub_var.startswith('__retval_') and next_block and self._is_return_guard_if(next_block):
+                        next_ss_ref = _value_ref(next_block.get('inputs', {}).get('SUBSTACK'))
+                        next_sub = self.blocks.get(next_ss_ref) if next_ss_ref else None
+                        if (next_sub and next_sub.get('opcode') == 'data_setvariableto' and
+                                next_sub.get('fields', {}).get('VARIABLE', [''])[0].startswith('__return_')):
+                            val_str = self.render_expr(sub_blk.get('inputs', {}).get('VALUE'))
+                            lines.append(f'{indent}return {val_str}')
+                            cur = next_block.get('next')
+                            continue
+                    # Sub-pattern 3b: guard holds __return_* = 1 → bare return
+                    if sub_var.startswith('__return_') and str(_extract_literal(
+                            sub_blk.get('inputs', {}).get('VALUE'))) == '1':
+                        lines.append(f'{indent}return')
+                        cur = next_id
+                        continue
+                # Sub-pattern 3c: regular return-guard – just unwrap the contents
+                if substack_ref:
+                    lines.extend(self.render_stmt_chain(substack_ref, indent))
+                cur = next_id
+                continue
+
             lines.extend(self.render_stmt(block, indent))
-            cur = block.get('next')
+            cur = next_id
         return lines
 
     def render_stmt(self, block, indent='    '):

@@ -21,6 +21,15 @@ class ASTBuilder:
         self.mod_name = self.source_path.stem
         self.const_env: dict[str, Any] = {"math.pi": 3.141592653589793}
         self.notes: list[str] = []
+        # Maps function name → (flag_var, retval_var) for functions with return values.
+        self.func_return_vars: dict[str, tuple[str, str]] = {}
+
+    @staticmethod
+    def _fn_has_return_value(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Return) and node.value is not None:
+                return True
+        return False
 
     def note(self, msg: str, node: ast.AST | None = None) -> None:
         line = getattr(node, 'lineno', '?') if node is not None else '?'
@@ -63,10 +72,20 @@ class ASTBuilder:
 
     def compile_function(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         args = [a.arg for a in fn.args.args]
-        body_blocks = self.compile_body(fn.body, fn_name=fn.name)
-        self.api.flow.procedure(fn.name, args, *body_blocks, x=720, y=120 + len(self.project.blocks) * 4)
+        init_blocks: list[str] = []
+        flag_var: str | None = None
+        retval_var: str | None = None
+        if self._fn_has_return_value(fn):
+            flag_var = f"__return_{fn.name}"
+            retval_var = f"__retval_{fn.name}"
+            self.api.vars.ensure(flag_var, 0, raw=True)
+            self.api.vars.ensure(retval_var, 0, raw=True)
+            self.func_return_vars[fn.name] = (flag_var, retval_var)
+            init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
+        body_blocks = self.compile_body(fn.body, fn_name=fn.name, flag_var=flag_var)
+        self.api.flow.procedure(fn.name, args, *init_blocks, *body_blocks, x=720, y=120 + len(self.project.blocks) * 4)
 
-    def compile_body(self, body: list[ast.stmt], fn_name: str) -> list[str]:
+    def compile_body(self, body: list[ast.stmt], fn_name: str, flag_var: str | None = None) -> list[str]:
         out: list[str] = []
         i = 0
         while i < len(body):
@@ -86,7 +105,15 @@ class ASTBuilder:
                 out.append(self.api.move.stop())
                 i += 2
                 continue
-            out.extend(self.compile_stmt(body[i], fn_name=fn_name))
+            compiled = self.compile_stmt(body[i], fn_name=fn_name, flag_var=flag_var)
+            if flag_var is None:
+                out.extend(compiled)
+            else:
+                # Guard each statement: skip it if return flag is already set.
+                # Create a fresh condition block for each guard – Scratch blocks can only have one parent.
+                for blk in compiled:
+                    guard = self.api.ops.eq(self.api.vars.get(flag_var, raw=True), 0)
+                    out.append(self.api.flow.if_(guard, blk))
             i += 1
         return out
 
@@ -103,10 +130,21 @@ class ASTBuilder:
         except Exception:
             return False
 
-    def compile_stmt(self, stmt: ast.stmt, fn_name: str) -> list[str]:
+    def compile_stmt(self, stmt: ast.stmt, fn_name: str, flag_var: str | None = None) -> list[str]:
         api = self.api
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
             name = stmt.targets[0].id
+            # Direct assignment from a function with return value: result = my_fn(args)
+            if (isinstance(stmt.value, ast.Call) and
+                    isinstance(stmt.value.func, ast.Name) and
+                    stmt.value.func.id in self.func_return_vars):
+                fn_called = stmt.value.func.id
+                _, retval_var = self.func_return_vars[fn_called]
+                args = [self.compile_expr(a, fn_name) for a in stmt.value.args]
+                call_blk = api.flow.call(fn_called, *args)
+                api.vars.add(name, 0, namespace=fn_name)
+                assign_blk = api.vars.set(name, api.vars.get(retval_var, raw=True), namespace=fn_name)
+                return [call_blk, assign_blk]
             api.vars.add(name, 0, namespace=fn_name)
             return [api.vars.set(name, self.compile_expr(stmt.value, fn_name), namespace=fn_name)]
         if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
@@ -124,7 +162,7 @@ class ASTBuilder:
                 return [self.compile_call(stmt.value.value, fn_name)]
         if isinstance(stmt, ast.If):
             cond = self.compile_condition(stmt.test, fn_name)
-            body = self.compile_body(stmt.body, fn_name)
+            body = self.compile_body(stmt.body, fn_name, flag_var=flag_var)
             out = [api.flow.if_(cond, *body)] if body else []
             if stmt.orelse:
                 self.note('else branch skipped (not yet lowered)', stmt)
@@ -139,9 +177,16 @@ class ASTBuilder:
                 # fallback: loop until impossible false, preserve body structure
                 cond = self.api.ops.eq(1, 0)
                 self.note('while True without top break guard lowered as repeat-until(false)', stmt)
-            return [api.flow.repeat_until(cond, *self.compile_body(rest, fn_name))]
+            return [api.flow.repeat_until(cond, *self.compile_body(rest, fn_name, flag_var=flag_var))]
         if isinstance(stmt, ast.Return):
-            return []
+            if fn_name not in self.func_return_vars:
+                return []
+            fv, rv = self.func_return_vars[fn_name]
+            blocks: list[str] = []
+            if stmt.value is not None:
+                blocks.append(api.vars.set(rv, self.compile_expr(stmt.value, fn_name), raw=True))
+            blocks.append(api.vars.set(fv, 1, raw=True))
+            return blocks
         self.note(f'unsupported stmt skipped: {type(stmt).__name__}', stmt)
         return []
 
