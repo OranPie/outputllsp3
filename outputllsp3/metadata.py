@@ -91,6 +91,23 @@ FEATURES = {
     ],
 }
 CHANGELOG = [
+    {"version": "0.33.0", "date": "2026-03-17", "notes": [
+        "Enhanced llsp3-to-Python export flow (python-first style) with many new opcode mappings.",
+        "render_expr: added operator_and/or/not, operator_mod, operator_random (→ random.randint), operator_round, operator_join, operator_length, operator_letter_of, operator_contains.",
+        "render_expr: added flipperoperator_isInBetween (→ lo <= v <= hi), data_itemnumoflist.",
+        "render_expr: added sensor reporters: flippersensors_orientationAxis (→ robot.angle), flippersensors_timer, flippersensors_loudness, flippersensors_buttonIsPressed, flippersensors_ismotion, flippersensors_isTilted, flippersensors_isorientation, flippersensors_distance, flippersensors_reflectivity, flippersensors_color, flippersensors_isColor, flippersensors_isDistance, flippersensors_isPressed, flippersensors_force.",
+        "render_expr: added flippermotor_speed, flippermotor_absolutePosition, flippermoremotor_position (→ robot.motor_relative_position).",
+        "render_stmt: added control_forever (→ while True:), control_stop/flippercontrol_stop (→ return), control_wait_until (→ while not: run.sleep(0.01)).",
+        "render_stmt: replaced __stmt__ placeholders with real calls: flippermove_setMovementPair → robot.use_pair(port.X, port.Y), flippermoremove_startDualSpeed → robot.drive, flippermoremove_startDualPower → robot.drive_power, flippermoremotor_motorSetDegreeCounted → robot.set_motor_position, flippersensors_resetYaw → robot.reset_yaw.",
+        "render_stmt: added motor opcodes: flippermotor_motorStartDirection, flippermotor_motorStop, flippermotor_motorTurnForDirection, flippermotor_motorGoDirectionToPosition, flippermotor_motorSetSpeed.",
+        "render_stmt: added sound opcodes: flippersound_beep, flippersound_beepForTime, flippersound_stopSound, flippersound_playSound, flippersound_playSoundUntilDone.",
+        "render_stmt: added display opcodes: flipperdisplay_ledMatrix, flipperdisplay_ledMatrixFor, flipperdisplay_ledMatrixText, flipperdisplay_ledMatrixOff, flipperdisplay_ledMatrixOn, flipperdisplay_ledMatrixBrightness, flipperdisplay_centerButtonLight.",
+        "render_stmt: fixed duplicate/broken procedures_call case (was relying on undocumented block.get('id') fallback).",
+        "render: multiple whenProgramStarts stacks each become a separate @run.main-decorated function.",
+        "render: added `import random` to the generated header.",
+        "parser.LLSP3Document: added `lists` property for symmetry with `variables`.",
+        "parser.LLSP3Document.summary(): added `list_count` and `list_names` fields.",
+    ]},
     {"version": "0.32.0", "date": "2026-03-17", "notes": [
         "Added default parameter value support for @robot.proc procedures in python-first mode and AST transpiler.",
         "Params with defaults (e.g. `def move(speed=420, dist=20):`) store their defaults in the Scratch `argumentdefaults` mutation field.",

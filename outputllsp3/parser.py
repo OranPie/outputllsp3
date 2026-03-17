@@ -47,6 +47,10 @@ class LLSP3Document:
     def variables(self) -> dict[str, list[Any]]:
         return self.sprite.get("variables", {})
 
+    @property
+    def lists(self) -> dict[str, list[Any]]:
+        return self.sprite.get("lists", {})
+
     def opcode_counts(self) -> Counter:
         return Counter(b.get("opcode") for b in self.blocks.values())
 
@@ -62,6 +66,8 @@ class LLSP3Document:
             "path": self.path,
             "block_count": len(self.blocks),
             "variable_count": len(self.variables),
+            "list_count": len(self.lists),
+            "list_names": [pair[0] for pair in self.lists.values()],
             "opcode_count": len(self.opcode_counts()),
             "procedure_count": len(self.procedure_names()),
             "procedures": self.procedure_names(),
