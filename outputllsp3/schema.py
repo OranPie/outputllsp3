@@ -1,3 +1,16 @@
+"""Verified-opcode registry extracted from a reference LLSP3 project.
+
+The schema registry provides the canonical list of opcodes that are known to
+be accepted by the LEGO SPIKE app.  Used by ``LLSP3Project.set_strict_verified``
+to raise early if an unrecognised opcode is used in generated projects.
+
+Public API
+----------
+- ``OpcodeSchema``        – dataclass holding the full opcode-to-metadata mapping.
+- ``SchemaRegistry``      – in-memory registry; use ``bundled_schema()`` for the
+  cached singleton built from the bundled ``block_reference.llsp3``.
+- ``bundled_schema()``    – ``@lru_cache`` factory returning the singleton instance.
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,20 @@
+"""Parse LLSP3 (and legacy LLSP) project archives into structured Python objects.
+
+An ``.llsp3`` file is a ZIP-inside-ZIP:
+
+  project.llsp3 (ZIP)
+  ├── manifest.json   – project metadata (name, type, …)
+  └── scratch.sb3 (ZIP)
+      └── project.json – Scratch VM project tree (targets, blocks, variables, …)
+
+Public API
+----------
+- ``LLSP3Document``  – dataclass holding parsed manifest + project data; provides
+  convenience properties ``sprite``, ``blocks``, ``variables``, ``summary()``,
+  ``opcode_counts()``, ``procedure_names()``.
+- ``parse_llsp3(path)``  – parse a ``.llsp3`` / ``.llsp`` file and return an
+  ``LLSP3Document``.
+"""
 from __future__ import annotations
 
 import io

@@ -1,3 +1,48 @@
+"""Python-first decorator-based transpiler.
+
+The *python-first* mode lets authors write LEGO SPIKE programs in idiomatic
+Python using a small set of decorators and runtime helpers, then compiles them
+directly to ``.llsp3`` projects:
+
+.. code-block:: python
+
+    from outputllsp3 import robot, run, port, ls
+
+    @robot.proc
+    def move_square(side=20, speed=420):
+        for _ in range(4):
+            robot.forward_cm(side, speed)
+            robot.turn_deg(90, 260)
+
+    @run.main
+    def main():
+        robot.use_pair(port.B, port.A)
+        move_square()          # all defaults
+        move_square(30)        # override side
+
+Supported constructs
+--------------------
+- ``@robot.proc`` / ``@run.main`` decorator-based function definitions
+- Default parameter values and keyword arguments at call sites
+- Return values from ``@robot.proc`` functions
+- ``for _ in range(n)`` loops (constant and variable counts)
+- ``while`` with ``break`` / ``continue`` / ``else``
+- ``if`` / ``elif`` / ``else``
+- Arithmetic, comparison, boolean operators
+- List operations (``ls.list``, ``.append``, ``.get``, ``.set``, ``.contains``, …)
+- ``robot.*`` movement helpers (forward_cm, turn_deg, pivot, stop, …)
+- ``run.sleep`` / ``run.sleep_ms``
+
+Public API
+----------
+- ``robot``  – ``@robot.proc`` decorator + movement helpers namespace
+- ``run``    – ``@run.main`` decorator + sleep helpers
+- ``port``   – port constants (``port.A`` … ``port.F``)
+- ``ls``     – list declaration helper (``ls.list(name)``)
+- ``transpile_pythonfirst_file(path, …)`` – compile and save ``.llsp3``
+- ``reset_pythonfirst_registry()`` – clear the global proc registry (useful
+  for testing multiple programs in the same process)
+"""
 from __future__ import annotations
 
 import ast

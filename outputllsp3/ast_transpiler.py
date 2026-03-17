@@ -1,3 +1,26 @@
+"""Python AST → Scratch blocks transpiler (``build-ast`` mode).
+
+The AST transpiler compiles real Python source files (written in a subset of
+Python that mirrors the SPIKE micropython API) directly to LLSP3 projects by
+walking the Python AST and lowering each construct to the equivalent Scratch
+block graph.
+
+Supported constructs
+--------------------
+- Top-level constants (``x = 42``) → Scratch variables
+- Functions / async functions → custom Scratch procedures
+- Default parameter values for procedures
+- Return values via ``__retval_*`` / ``__return_*`` variable pairs
+- ``if`` / ``while True`` with break / ``for`` (limited)
+- Arithmetic, comparison, boolean operators
+- ``runloop.run(main())`` and bare ``main()`` as program-start triggers
+- Common SPIKE API calls: ``runloop.sleep_ms``, ``motor.*``, ``motion_sensor.*``
+
+Entry points
+------------
+- ``transpile_python_source(path, …)`` – compile a single Python source file
+  and write an ``.llsp3`` project.
+"""
 from __future__ import annotations
 
 import ast

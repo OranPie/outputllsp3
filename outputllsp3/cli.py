@@ -1,3 +1,31 @@
+"""Command-line interface for outputllsp3.
+
+All sub-commands are implemented as ``cmd_*`` functions and registered with
+``argparse``.  The ``main()`` function is the console-scripts entry point
+declared in ``setup.cfg``.
+
+Sub-commands
+------------
+======================  =====================================================
+build                   Compile a build-script Python file/package → .llsp3
+build-ast               Compile a SPIKE-Python source file → .llsp3 (AST mode)
+build-python            Compile a python-first source file → .llsp3
+export-python           Decompile an .llsp3 → Python (raw / builder / python-first)
+inspect                 Print block/variable/procedure summary for an .llsp3
+roundtrip               Copy an .llsp3 with canonical member ordering
+autodiscover            Show discovered template/strings paths for a workspace
+doctor                  Health-check a workspace directory
+init                    Scaffold a new robot programming workspace
+bundled-paths           Show paths to bundled resource files
+verified-opcodes        Dump the verified opcode registry
+docs-index              Dump the documentation file index
+features                Dump the feature list
+version                 Show package version and metadata
+changelog               Show the version changelog
+modules                 List available Scratch modules
+describe                Describe one module or block by name
+======================  =====================================================
+"""
 from __future__ import annotations
 
 import argparse

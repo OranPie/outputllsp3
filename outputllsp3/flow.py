@@ -1,3 +1,22 @@
+"""Block-sequencing helpers that sit between ``API`` and ``LLSP3Project``.
+
+``FlowBuilder`` is a thin adapter used by ``API.flow`` and ``API.f``.  It
+provides high-level helpers for constructing control-flow graphs:
+
+- ``start(*body)``                   – attach a ``whenProgramStarts`` hat block
+- ``procedure(name, args, *body)``   – define a custom Scratch procedure
+- ``call(name, *args)``              – generate a ``procedures_call`` block
+- ``if_(cond, *body)``               – ``control_if``
+- ``if_else(cond, *then, **else_)``  – ``control_if_else``
+- ``repeat(times, *body)``           – ``control_repeat``
+- ``repeat_until(cond, *body)``      – ``control_repeat_until``
+- ``chain(parent, *body)``           – attach a block sequence to a parent
+- ``seq(*items)``                    – flatten a mixed list of IDs / lists
+- ``comment(text, …)``               – attach a floating comment to a block
+
+All methods return block IDs (strings) so they compose naturally with each
+other and with the rest of the ``API`` facade.
+"""
 from __future__ import annotations
 
 import inspect

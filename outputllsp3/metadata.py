@@ -1,3 +1,8 @@
+"""Package metadata: version, layout, feature catalogue, and changelog.
+
+This module is the single source of truth for package identity information
+and is intentionally import-cycle-free (only imports from ``.version``).
+"""
 from __future__ import annotations
 
 PACKAGE_NAME = "outputllsp3"
@@ -6,13 +11,48 @@ from .version import __version__
 VERSION = __version__
 UPDATED_AT = "2026-03-17"
 DOCS_UPDATED_AT = "2026-03-17"
+
+# ---------------------------------------------------------------------------
+# Declared package layout – all modules grouped by subsystem.
+# ---------------------------------------------------------------------------
 PACKAGE_LAYOUT = {
-    "core": ["catalog.py", "parser.py", "project.py", "schema.py"],
-    "authoring": ["api.py", "flow.py", "wrapper.py", "spikepython.py", "enums.py"],
-    "transpile": ["transpiler.py", "ast_transpiler.py"],
-    "workflow": ["workflow.py", "cli.py"],
-    "resources": ["resources/ok.llsp3", "resources/full.llsp3", "resources/block_reference.llsp3", "resources/strings.json"],
+    "infrastructure": [
+        "version.py",     # __version__ constant
+        "metadata.py",    # package identity, CHANGELOG, FEATURES, PACKAGE_LAYOUT
+        "enums.py",       # safe enum wrappers (MotorPair, Port, Button, …)
+    ],
+    "core": [
+        "parser.py",      # LLSP3Document + parse_llsp3() – reads .llsp/.llsp3 archives
+        "project.py",     # LLSP3Project – low-level block builder and .llsp3 serialiser
+        "catalog.py",     # BlockCatalog – block-template registry built from strings.json
+        "schema.py",      # SchemaRegistry / bundled_schema – verified-opcode registry
+    ],
+    "authoring": [
+        "api.py",         # API, RobotAPI – high-level facade dataclasses (VarsAPI, OpsAPI, …)
+        "flow.py",        # FlowBuilder – block-sequencing helpers (chain, seq, procedure, …)
+        "wrapper.py",     # ScratchWrapper – module-discovery facade over LLSP3Project
+        "spikepython.py", # SpikePythonAPI – SPIKE Python library facade (hub, motors, sensors)
+    ],
+    "transpile": [
+        "transpiler.py",      # Classic build-script transpiler (transpile_path/file/module/package)
+        "ast_transpiler.py",  # Python AST → Scratch blocks (transpile_python_source)
+        "pythonfirst.py",     # Python-first decorator transpiler (robot/run/port/ls + transpile_pythonfirst_file)
+    ],
+    "export": [
+        "exporter.py",    # LLSP3 → Python decompiler (export_llsp3_to_python, raw/builder/python-first)
+    ],
+    "workflow": [
+        "workflow.py",    # CLI utilities (discover_defaults, doctor_report, init_workspace, roundtrip_llsp3)
+        "cli.py",         # CLI entry-point (outputllsp3 command with all sub-commands)
+    ],
+    "resources": [
+        "resources/ok.llsp3",            # Minimal LLSP3 template used as base for generated projects
+        "resources/full.llsp3",          # Full LLSP3 template with all blocks available
+        "resources/block_reference.llsp3", # Block reference template for opcode discovery
+        "resources/strings.json",        # Scratch block string definitions (labels, menus)
+    ],
 }
+
 FEATURES = {
     "core": [
         "parse .llsp/.llsp3",
@@ -20,6 +60,14 @@ FEATURES = {
         "export llsp3 back to python (raw, builder, and python-first styles)",
         "strict verified opcode mode",
         "bundled ok/full/block_reference/strings resources",
+    ],
+    "transpile": [
+        "classic build-script transpiler (module/file/package)",
+        "python AST → scratch blocks transpiler",
+        "python-first decorator transpiler (@robot.proc / @run.main)",
+        "default parameter values for custom procedures",
+        "custom procedure return values via retval variables",
+        "keyword arguments at call sites",
     ],
     "workflow": [
         "doctor",

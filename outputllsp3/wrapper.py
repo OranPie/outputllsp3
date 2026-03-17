@@ -1,3 +1,17 @@
+"""Module-discovery facade that maps LLSP3Project opcodes to callable helpers.
+
+``ScratchWrapper`` wraps an ``LLSP3Project`` and uses schema introspection to
+expose Scratch modules as first-class Python objects.  Callers can enumerate
+available modules, look up individual blocks, and invoke them to generate block
+IDs without knowing raw opcode strings.
+
+Public API
+----------
+- ``ScratchWrapper(project)``  – wrap an ``LLSP3Project``
+- ``available_modules(verified_only)`` – list module names derived from opcodes
+- ``describe(module, name)``           – return block metadata for one opcode
+- ``invoke(opcode, **kwargs)``         – generate a block by opcode string
+"""
 
 from __future__ import annotations
 

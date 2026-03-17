@@ -1,3 +1,19 @@
+"""CLI workflow utilities: resource discovery, workspace init, doctor, roundtrip.
+
+This module provides the Python-level implementation for each ``outputllsp3``
+sub-command, plus pure-Python helpers used by both the CLI and programmatic
+callers.
+
+Public API
+----------
+- ``bundled_paths()``          – paths to all bundled resource files
+- ``discover_defaults(base)``  – search upward from *base* for workspace
+  resources; falls back to bundled copies
+- ``doctor_report(base)``      – structured health-check of a workspace
+- ``init_workspace(dir, …)``   – scaffold a new robot programming workspace
+- ``roundtrip_llsp3(in, out)`` – copy an llsp3, preserving canonical ordering
+- ``docs_index()``             – structured documentation file index
+"""
 from __future__ import annotations
 
 import json

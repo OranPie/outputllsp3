@@ -1,3 +1,36 @@
+"""Low-level LLSP3 project builder and serialiser.
+
+``LLSP3Project`` is the central object of the package.  It holds the in-memory
+representation of a Scratch project (blocks, variables, lists, procedures,
+assets) and provides the full block-creation API used by every transpiler.
+
+Typical usage::
+
+    project = LLSP3Project('ok.llsp3', 'strings.json')
+    api = API(project)
+    api.flow.start(api.move.forward_cm(20))
+    project.save('out.llsp3')
+
+Architecture
+------------
+- **Block creation** – ``add_block()`` generates a unique ID, registers the
+  block in ``self.blocks``, and wires parent / next / input pointers.
+- **Variables & lists** – ``add_variable()`` / ``add_list()`` declare sprite-level
+  resources; ``variable()`` / ``list_item()`` generate reporter blocks.
+- **Procedures** – ``define_procedure()`` / ``call_procedure()`` / ``arg()``
+  manage custom Scratch procedures including default-value mutation fields.
+- **Validation** – when ``set_strict_verified(True)`` all opcodes are checked
+  against the bundled schema; additional structural checks run on ``save()``.
+- **Serialisation** – ``save()`` rebuilds the llsp3 ZIP from the template,
+  normalises asset hashes, injects generated ``project.json``, and writes to
+  the target path.
+
+Public API
+----------
+``LLSP3Project``, ``add_block``, ``add_variable``, ``add_list``,
+``define_procedure``, ``call_procedure``, ``arg``, ``chain``,
+``set_strict_verified``, ``save``, ``cleanup``
+"""
 from __future__ import annotations
 
 import json

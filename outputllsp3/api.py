@@ -1,3 +1,29 @@
+"""High-level authoring facades built on top of ``LLSP3Project``.
+
+Each facade is a frozen dataclass wrapping a ``project`` reference.  They
+provide domain-specific helpers that generate the correct Scratch blocks without
+requiring callers to know opcode names or block-field layouts.
+
+Facade classes
+--------------
+- ``VarsAPI``        – variable declare / get / set / change
+- ``ListsAPI``       – list declare, append, clear, item, contains, setitem, delete, insert
+- ``OpsAPI``         – arithmetic, comparison, string, and boolean operators
+- ``WaitAPI``        – wait-for-seconds / wait-for-milliseconds blocks
+- ``SensorAPI``      – IMU and motor sensor readers
+- ``MotorAPI``       – individual motor control (run, stop, relative-position, …)
+- ``MoveAPI``        – drive-base control (forward, turn, pair setup, …)
+- ``FlowAPI``        – alias for :class:`flow.FlowBuilder` (procedure, call, if, loops, …)
+- ``DrivebaseAPI``   – PID-runtime installer and high-level robot helpers
+- ``RobotAPI``       – high-level robot API (straight_cm, turn_deg, pivot, stop, …)
+
+Aggregate
+---------
+- ``API``       – top-level dataclass combining all sub-facades; also exposes
+  short aliases ``v/o/m/s/f/db/e`` for interactive use and a
+  ``namespace()`` context-manager for temporary scoped variable prefixing.
+- ``RobotAPI``  – re-exported from the drivebase layer for convenience.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

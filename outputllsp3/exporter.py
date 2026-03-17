@@ -1,3 +1,27 @@
+"""LLSP3 → Python decompiler / exporter.
+
+Converts a compiled ``.llsp3`` project back to Python source code.  Three
+output styles are supported:
+
+``raw``
+    Minimal faithful reconstruction; each block becomes a direct API call.
+    Suitable for automated round-trip testing.
+
+``builder``
+    Same semantics as ``raw`` but with module structure and commentary that
+    makes the file human-editable as a build script.
+
+``python-first``
+    Higher-level decompilation that lifts common patterns to python-first
+    idioms (``@robot.proc`` / ``@run.main``, ``robot.forward_cm``, …).
+    The output is approximate—round-tripping through python-first may not
+    preserve every low-level block detail, but produces readable programs.
+    Default-parameter values and return values are correctly round-tripped.
+
+Public API
+----------
+- ``export_llsp3_to_python(path, out, *, style)`` – main entry point.
+"""
 from __future__ import annotations
 
 import json
