@@ -48,8 +48,8 @@ class FlowBuilder:
     def repeat(self, times: Any, *body: Any) -> str:
         return self.project.repeat(times, *self._flat(*body))
 
-    def procedure(self, name: str, args: list[str], *body: Any, x: int = 700, y: int = 160, add_reference_comment: bool = True) -> str:
-        defid = self.project.define_procedure(name, args, x=x, y=y)
+    def procedure(self, name: str, args: list[str], *body: Any, defaults: list[Any] | None = None, x: int = 700, y: int = 160, add_reference_comment: bool = True) -> str:
+        defid = self.project.define_procedure(name, args, x=x, y=y, defaults=defaults)
         self.project.attach_procedure_body(name, *self._flat(*body))
         if add_reference_comment:
             self.project.add_comment(defid, self._caller_reference(), x=x + 220, y=y - 10, width=320, height=90)

@@ -43,6 +43,15 @@ FEATURES = {
     ],
 }
 CHANGELOG = [
+    {"version": "0.32.0", "date": "2026-03-17", "notes": [
+        "Added default parameter value support for @robot.proc procedures in python-first mode and AST transpiler.",
+        "Params with defaults (e.g. `def move(speed=420, dist=20):`) store their defaults in the Scratch `argumentdefaults` mutation field.",
+        "Calls with fewer args than params have missing positional args filled from the proc's stored defaults at the call site.",
+        "Keyword arguments at call sites (e.g. `move(dist=30)`) are now supported and matched to the declared parameter order.",
+        "project.py `define_procedure()` accepts an optional `defaults` list; `call_procedure()` applies defaults for missing args.",
+        "flow.py `procedure()` accepts an optional `defaults` keyword argument.",
+        "Exporter (python-first style) reads `argumentdefaults` from proc mutations and emits `def proc(a, b=default):` in the decompiled output.",
+    ]},
     {"version": "0.31.0", "date": "2026-03-17", "notes": [
         "Added custom function return value support for @robot.proc procedures in python-first mode.",
         "Each proc that uses `return value` gets a unique `__retval_<proc>` variable (readable after the call) and a `__return_<proc>` flag that guards subsequent statements so they are skipped after return.",

@@ -226,8 +226,30 @@ class _PFExport:
                     argnames = json.loads(mut.get('argumentnames', '[]'))
                 except Exception:
                     argnames = []
+                argdefaults_raw: list[str] = []
+                try:
+                    argdefaults_raw = json.loads(mut.get('argumentdefaults', '[]'))
+                except Exception:
+                    argdefaults_raw = []
+                # Convert default strings to Python values (numbers or strings).
+                # An empty string means "no default for this param".
+                def _parse_default(s: str):
+                    if not s:
+                        return None
+                    try:
+                        v = float(s)
+                        return int(v) if v == int(v) else v
+                    except (ValueError, TypeError):
+                        return s
+                argdefaults = [_parse_default(argdefaults_raw[i]) if i < len(argdefaults_raw) else None for i in range(len(argnames))]
                 name = (mut.get('proccode') or 'procedure').split(' %s')[0]
-                procs.append({'def_id': bid, 'name': _sanitize(name, 'proc'), 'argnames': [_sanitize(a,'arg') for a in argnames], 'body': b.get('next')})
+                procs.append({
+                    'def_id': bid,
+                    'name': _sanitize(name, 'proc'),
+                    'argnames': [_sanitize(a, 'arg') for a in argnames],
+                    'argdefaults': argdefaults,
+                    'body': b.get('next'),
+                })
         return procs
 
     def render_expr(self, ref):
@@ -534,7 +556,16 @@ class _PFExport:
         if self.doc.variables or self.doc.sprite.get('lists', {}):
             lines.append('')
         for proc in self.proc_defs:
-            args = ', '.join(proc['argnames'])
+            argnames = proc['argnames']
+            argdefaults = proc.get('argdefaults', [])
+            param_parts = []
+            for i, aname in enumerate(argnames):
+                default = argdefaults[i] if i < len(argdefaults) else None
+                if default is not None:
+                    param_parts.append(f'{aname}={repr(default)}')
+                else:
+                    param_parts.append(aname)
+            args = ', '.join(param_parts)
             lines.append('@robot.proc')
             lines.append(f'def {proc["name"]}({args}):')
             body = self.render_stmt_chain(proc['body'], '    ')

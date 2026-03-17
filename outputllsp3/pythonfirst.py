@@ -159,6 +159,10 @@ class PythonFirstContext:
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
         # Maps proc name → ReturnContext for procs that use ``return value``.
         self.proc_return_vars: dict[str, ReturnContext] = {}
+        # Maps proc name → ordered list of param names.
+        self.proc_params: dict[str, list[str]] = {}
+        # Maps proc name → {param_name: default_value} for params that have defaults.
+        self.proc_defaults: dict[str, dict[str, Any]] = {}
         self.runtime_config = {
             "motor_pair": "AB",
             "left_dir": 1,
@@ -179,6 +183,76 @@ class PythonFirstContext:
             if isinstance(node, ast.Return) and node.value is not None:
                 return True
         return False
+
+    def _extract_fn_defaults(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Any]:
+        """Return ``{param_name: const_value}`` for params that have default values.
+
+        Defaults for all params are extracted from the AST.  Non-constant defaults
+        (e.g. a function call) are const-evaluated; if evaluation fails the default
+        is reported as a compile note and set to ``0`` so the build still succeeds.
+        """
+        args = fn.args.args
+        defaults = fn.args.defaults  # last len(defaults) params
+        n = len(args)
+        m = len(defaults)
+        result: dict[str, Any] = {}
+        for i, default_node in enumerate(defaults):
+            param_name = args[n - m + i].arg
+            v = self.const_eval(default_node)
+            if v is not None:
+                result[param_name] = v
+            else:
+                self.note(
+                    f'non-constant default for param {param_name!r} in {fn.name!r}; using 0',
+                    default_node,
+                )
+                result[param_name] = 0
+        return result
+
+    def _fill_proc_args(self, proc_name: str, call: ast.Call, fn_name: str, params: set[str]) -> list[Any]:
+        """Build the full ordered argument list for a call to *proc_name*.
+
+        Handles three cases:
+        * Positional args provided – used as-is.
+        * Keyword args (``my_proc(speed=300)``) – matched to the declared parameter order.
+        * Missing positional args – filled in from the proc's default values.
+
+        If no parameter metadata is available (proc defined elsewhere / built-in) the
+        raw positional arg list is returned unchanged.
+        """
+        param_list = self.proc_params.get(proc_name)
+        if param_list is None:
+            # No metadata: just compile the positional args
+            return [self.compile_expr(a, fn_name, params) for a in call.args]
+
+        defaults_map = self.proc_defaults.get(proc_name, {})
+        filled: dict[int, Any] = {}
+
+        # Positional args
+        for i, arg in enumerate(call.args):
+            filled[i] = self.compile_expr(arg, fn_name, params)
+
+        # Keyword args – match by parameter name
+        for kw in call.keywords:
+            if kw.arg in param_list:
+                idx = param_list.index(kw.arg)
+                filled[idx] = self.compile_expr(kw.value, fn_name, params)
+            elif kw.arg:
+                self.note(f'unknown keyword arg {kw.arg!r} in call to {proc_name!r}; skipped', call)
+
+        # Build the ordered result, filling defaults for any missing positions
+        result: list[Any] = []
+        for i, p in enumerate(param_list):
+            if i in filled:
+                result.append(filled[i])
+            elif p in defaults_map:
+                result.append(defaults_map[p])
+            else:
+                self.note(
+                    f'missing required arg {p!r} in call to {proc_name!r} (no default); using 0', call
+                )
+                result.append(0)
+        return result
 
     def analyze(self, tree: ast.Module) -> None:
         for node in tree.body:
@@ -215,6 +289,12 @@ class PythonFirstContext:
         idx = 0
         for fn in self.proc_defs:
             params = [a.arg for a in fn.args.args]
+            # Collect default values for each parameter.
+            defaults_map = self._extract_fn_defaults(fn)
+            defaults_list = [defaults_map.get(p, "") for p in params]
+            self.proc_params[fn.name] = params
+            if defaults_map:
+                self.proc_defaults[fn.name] = defaults_map
             return_ctx: ReturnContext | None = None
             init_blocks: list[str] = []
             if self._fn_has_return_value(fn):
@@ -227,7 +307,7 @@ class PythonFirstContext:
                 # Reset flag at the start of each call so it doesn't carry over.
                 init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
             body = self.compile_body(fn.body, fn_name=fn.name, params=set(params), return_ctx=return_ctx)
-            self.api.flow.procedure(fn.name, params, *init_blocks, *body, x=700, y=160 + idx * 230)
+            self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, x=700, y=160 + idx * 230)
             idx += 1
 
         if self.main_def is None:
@@ -369,7 +449,8 @@ class PythonFirstContext:
                         expr,
                     )
                     return self.api.vars.get(self.proc_return_vars[proc_name].retval_var, raw=True)
-                return self.api.flow.call(proc_name, *[self.compile_expr(a, fn_name, params) for a in expr.args])
+                full_args = self._fill_proc_args(proc_name, expr, fn_name, params)
+                return self.api.flow.call(proc_name, *full_args)
         if isinstance(expr, ast.BoolOp) and expr.values:
             compiled = [self.compile_condition(v, fn_name, params) for v in expr.values]
             acc = compiled[0]
@@ -561,8 +642,8 @@ class PythonFirstContext:
                         stmt.value.func.id in self.proc_return_vars):
                     proc_name = stmt.value.func.id
                     rctx = self.proc_return_vars[proc_name]
-                    args = [self.compile_expr(a, fn_name, params) for a in stmt.value.args]
-                    call_blk = self.api.flow.call(proc_name, *args)
+                    full_args = self._fill_proc_args(proc_name, stmt.value, fn_name, params)
+                    call_blk = self.api.flow.call(proc_name, *full_args)
                     self.api.vars.ensure(target, 0, namespace=fn_name)
                     assign_blk = self.api.vars.set(
                         target,
@@ -900,7 +981,9 @@ class PythonFirstContext:
 
         # procedure call
         if isinstance(call.func, ast.Name):
-            return self.api.flow.call(call.func.id, *args)
+            proc_name = call.func.id
+            full_args = self._fill_proc_args(proc_name, call, fn_name, params)
+            return self.api.flow.call(proc_name, *full_args)
 
         self.note(f'unsupported call lowered to no-op: {name}', call)
         return self.api.wait.seconds(0)
