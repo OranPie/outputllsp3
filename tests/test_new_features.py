@@ -93,6 +93,9 @@ def _defaults():
 def test_verbose_logging_pythonfirst(caplog):
     """transpile_pythonfirst_file emits debug log messages."""
     from outputllsp3 import transpile_pythonfirst_file, reset_pythonfirst_registry
+    from outputllsp3.locale import set_locale, get_locale
+    old_locale = get_locale()
+    set_locale("en")
     reset_pythonfirst_registry()
     d = _defaults()
     src = """\
@@ -109,8 +112,9 @@ def main():
     try:
         with caplog.at_level(logging.DEBUG, logger="outputllsp3.pythonfirst"):
             transpile_pythonfirst_file(py, template=d['template'], strings=d['strings'], out=out)
-        assert any("Python-first" in r.message or "正在" in r.message for r in caplog.records)
+        assert any("Python-first" in r.message for r in caplog.records)
     finally:
+        set_locale(old_locale)
         os.unlink(py)
         if Path(out).exists():
             os.unlink(out)
@@ -119,6 +123,9 @@ def main():
 def test_verbose_logging_ast(caplog):
     """transpile_python_source emits debug log messages."""
     from outputllsp3 import transpile_python_source
+    from outputllsp3.locale import set_locale, get_locale
+    old_locale = get_locale()
+    set_locale("en")
     d = _defaults()
     src = """\
 def main():
@@ -133,6 +140,7 @@ def main():
             transpile_python_source(py, template=d['template'], strings=d['strings'], out=out)
         assert any("AST" in r.message for r in caplog.records)
     finally:
+        set_locale(old_locale)
         os.unlink(py)
         if Path(out).exists():
             os.unlink(out)
@@ -141,6 +149,9 @@ def main():
 def test_verbose_logging_exporter(caplog):
     """export_llsp3_to_python emits debug log messages."""
     from outputllsp3 import transpile_pythonfirst_file, export_llsp3_to_python, reset_pythonfirst_registry
+    from outputllsp3.locale import set_locale, get_locale
+    old_locale = get_locale()
+    set_locale("en")
     reset_pythonfirst_registry()
     d = _defaults()
     src = """\
@@ -159,8 +170,9 @@ def main():
         transpile_pythonfirst_file(py, template=d['template'], strings=d['strings'], out=llsp3)
         with caplog.at_level(logging.DEBUG, logger="outputllsp3.exporter"):
             export_llsp3_to_python(llsp3, out_py, style='python-first')
-        assert any("Export" in r.message or "导出" in r.message for r in caplog.records)
+        assert any("Export" in r.message for r in caplog.records)
     finally:
+        set_locale(old_locale)
         os.unlink(py)
         for p in (llsp3, out_py):
             if Path(p).exists():
@@ -170,6 +182,9 @@ def main():
 def test_verbose_logging_build_script(caplog):
     """transpile_path emits debug log messages."""
     from outputllsp3 import transpile_path
+    from outputllsp3.locale import set_locale, get_locale
+    old_locale = get_locale()
+    set_locale("en")
     d = _defaults()
     src = """\
 def build(project, api, ns):
@@ -182,8 +197,9 @@ def build(project, api, ns):
     try:
         with caplog.at_level(logging.DEBUG, logger="outputllsp3.transpiler"):
             transpile_path(py, template=d['template'], strings=d['strings'], out=out)
-        assert any("Transpil" in r.message or "转译" in r.message for r in caplog.records)
+        assert any("Transpil" in r.message for r in caplog.records)
     finally:
+        set_locale(old_locale)
         os.unlink(py)
         if Path(out).exists():
             os.unlink(out)
