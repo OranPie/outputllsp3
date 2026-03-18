@@ -24,12 +24,16 @@ Entry points
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from typing import Any
 
 from .api import API
 from .project import LLSP3Project
 from .transpiler import autodiscover
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 class UnsupportedNode(Exception):
@@ -113,8 +117,10 @@ class ASTBuilder:
     def note(self, msg: str, node: ast.AST | None = None) -> None:
         line = getattr(node, 'lineno', '?') if node is not None else '?'
         self.notes.append(f"L{line}: {msg}")
+        logger.debug(t("ast.note", msg=f"L{line}: {msg}"))
 
     def transpile(self, tree: ast.Module) -> None:
+        logger.debug(t("ast.parse", path=self.source_path, count=len(tree.body)))
         # top-level constants
         for node in tree.body:
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -151,6 +157,7 @@ class ASTBuilder:
 
     def compile_function(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         args = [a.arg for a in fn.args.args]
+        logger.debug(t("ast.function", name=fn.name, arg_count=len(args)))
         # Extract defaults
         defaults_map = self._extract_fn_defaults(fn)
         defaults_list = [defaults_map.get(p, "") for p in args]
@@ -442,6 +449,7 @@ class ASTBuilder:
 def transpile_python_source(path: str | Path, *, template: str | Path | None = None, strings: str | Path | None = None,
                             out: str | Path, sprite_name: str | None = None, function_namespace: bool = False) -> Path:
     path = Path(path)
+    logger.debug(t("ast.start", path=path))
     auto = autodiscover(path.parent)
     template = Path(template) if template else auto['template']
     strings = Path(strings) if strings else auto['strings']
@@ -454,6 +462,9 @@ def transpile_python_source(path: str | Path, *, template: str | Path | None = N
     builder = ASTBuilder(project, path)
     try:
         builder.transpile(tree)
-        return project.save(out)
+        logger.debug(t("ast.save", out=out))
+        result = project.save(out)
+        logger.info(t("ast.done", out=result))
+        return result
     finally:
         project.cleanup()

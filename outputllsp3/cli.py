@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from .catalog import BlockCatalog
@@ -42,6 +43,7 @@ from .project import LLSP3Project
 from .schema import bundled_schema
 from .exporter import export_llsp3_to_python
 from .metadata import package_info, FEATURES, CHANGELOG
+from .locale import set_locale, available_locales
 
 
 def _wrapper_for(base: str | None = None, strict_verified: bool = False):
@@ -174,6 +176,8 @@ def cmd_changelog(args):
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description='OutputLLSP3 workflow-first parser + transpiler')
+    p.add_argument('--verbose', '-v', action='store_true', help='Enable verbose transpiler logging')
+    p.add_argument('--locale', choices=available_locales(), default=None, help='Set locale for messages (e.g. zh_CN)')
     sub = p.add_subparsers(dest='cmd', required=True)
 
     ep = sub.add_parser('export-python')
@@ -273,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
     desc.set_defaults(func=cmd_describe)
 
     args = p.parse_args(argv)
+    if args.locale:
+        set_locale(args.locale)
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format='%(name)s %(message)s')
     return args.func(args)
 
 

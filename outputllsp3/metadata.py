@@ -9,8 +9,8 @@ PACKAGE_NAME = "outputllsp3"
 from .version import __version__
 
 VERSION = __version__
-UPDATED_AT = "2026-03-17"
-DOCS_UPDATED_AT = "2026-03-17"
+UPDATED_AT = "2026-03-18"
+DOCS_UPDATED_AT = "2026-03-18"
 
 # ---------------------------------------------------------------------------
 # Declared package layout – all modules grouped by subsystem.
@@ -20,6 +20,7 @@ PACKAGE_LAYOUT = {
         "version.py",     # __version__ constant
         "metadata.py",    # package identity, CHANGELOG, FEATURES, PACKAGE_LAYOUT
         "enums.py",       # safe enum wrappers (MotorPair, Port, Button, …)
+        "locale.py",      # i18n / l10n support (en, zh_CN catalogs; set_locale/t)
     ],
     "core": [
         "parser.py",      # LLSP3Document + parse_llsp3() – reads .llsp/.llsp3 archives
@@ -87,10 +88,43 @@ FEATURES = {
         "expanded safe enums",
         "short aliases: api.v/o/m/s/f/db/e",
         "flow.chain/seq/comment helpers",
+        "flow.if_else/forever/wait_until/stop helpers",
         "api.namespace() scoped variable prefixing",
+        "verbose transpiler logging via Python logging module",
+        "zh_CN (Simplified Chinese) localization",
+        "OpsAPI: mod, round, join, length_of, letter_of, str_contains, random, mathop",
+        "SensorAPI: pitch, roll, timer, loudness, button_pressed, color, distance, force, reflectivity",
+        "MotorAPI: run, run_power, stop, run_for_degrees, run_for_seconds, set_stop_mode, absolute_position, speed",
+        "LightAPI: show_text, show_image, show_image_for, set_pixel, clear, set_brightness, set_center_button",
+        "SoundAPI: beep, beep_for, play, play_until_done, stop",
+        "MoveAPI: steer, steer_for_distance",
+        "python-first robot helpers: show_text, show_image, beep, reset_yaw, run_motor, stop_motor, angle, color, distance, force",
     ],
 }
 CHANGELOG = [
+    {"version": "0.35.0", "date": "2026-03-18", "notes": [
+        "OpsAPI: added mod, round, join, length_of, letter_of, str_contains, random, mathop helpers.",
+        "SensorAPI: added pitch, roll, timer, reset_timer, loudness, button_pressed, color, is_color, distance, is_distance, force, is_pressed, reflectivity.",
+        "MotorAPI: added run, run_power, stop, run_for_degrees, run_for_seconds, set_stop_mode, absolute_position, speed.",
+        "New LightAPI facade: show_text, show_image, show_image_for, set_pixel, clear, set_brightness, set_center_button.",
+        "New SoundAPI facade: beep, beep_for, play, play_until_done, stop.",
+        "MoveAPI: added steer and steer_for_distance helpers.",
+        "FlowBuilder: added wait_until and stop helpers.",
+        "LLSP3Project: added mod, round_, join, length_of, letter_of, str_contains, random, wait_until, stop_all low-level methods.",
+        "Python-first: added robot.show_text, robot.show_image, robot.clear_display, robot.beep, robot.stop_sound, robot.reset_yaw, robot.run_motor, robot.stop_motor, robot.motor_run_for_degrees.",
+        "Python-first: added expression helpers robot.angle, robot.motor_relative_position, robot.motor_speed, robot.color, robot.distance, robot.force, robot.reflectivity.",
+        "New public API exports: LightAPI, SoundAPI.",
+    ]},
+    {"version": "0.34.0", "date": "2026-03-18", "notes": [
+        "Added verbose transpiler logging via Python logging module in all transpiler modules (transpiler, ast_transpiler, pythonfirst, exporter).",
+        "Added zh_CN (Simplified Chinese) localization: new locale.py with message catalogs; set_locale('zh_CN') switches all log/UI messages to Chinese.",
+        "New public API: set_locale(), get_locale(), t(), available_locales() exported from package root.",
+        "FlowBuilder: added if_else(condition, then_body, else_body) helper for control_if_else blocks.",
+        "FlowBuilder: added forever(*body) helper for control_forever blocks.",
+        "LLSP3Project: added if_else_block() and forever() low-level methods.",
+        "CLI: added --verbose / -v flag to enable DEBUG-level transpiler logging.",
+        "CLI: added --locale flag to switch UI/log message language (en, zh_CN).",
+    ]},
     {"version": "0.33.0", "date": "2026-03-17", "notes": [
         "Enhanced llsp3-to-Python export flow (python-first style) with many new opcode mappings.",
         "render_expr: added operator_and/or/not, operator_mod, operator_random (→ random.randint), operator_round, operator_join, operator_length, operator_letter_of, operator_contains.",

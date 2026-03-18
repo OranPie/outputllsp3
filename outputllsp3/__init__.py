@@ -45,6 +45,7 @@ from .enums import (
     LightImage,
     ColorValue,
 )
+from .locale import set_locale, get_locale, t, available_locales
 
 # ---------------------------------------------------------------------------
 # Core
@@ -57,7 +58,7 @@ from .schema import SchemaRegistry, bundled_schema
 # ---------------------------------------------------------------------------
 # Authoring facades
 # ---------------------------------------------------------------------------
-from .api import API, RobotAPI
+from .api import API, RobotAPI, LightAPI, SoundAPI
 from .flow import FlowBuilder
 from .wrapper import ScratchWrapper
 from .spikepython import SpikePythonAPI
@@ -111,6 +112,10 @@ __all__ = [
     "OrientationAxis",
     "LightImage",
     "ColorValue",
+    "set_locale",
+    "get_locale",
+    "t",
+    "available_locales",
     # Core
     "LLSP3Document",
     "parse_llsp3",
@@ -121,6 +126,8 @@ __all__ = [
     # Authoring
     "API",
     "RobotAPI",
+    "LightAPI",
+    "SoundAPI",
     "FlowBuilder",
     "ScratchWrapper",
     "SpikePythonAPI",

@@ -61,6 +61,22 @@ class FlowBuilder:
     def if_(self, condition: str, *body: Any) -> str:
         return self.project.if_block(condition, *self._flat(*body))
 
+    def if_else(self, condition: str, then_body: list[Any] | tuple[Any, ...], else_body: list[Any] | tuple[Any, ...]) -> str:
+        """``control_if_else`` – if/else with two branches."""
+        return self.project.if_else_block(condition, tuple(self._flat(*then_body)), tuple(self._flat(*else_body)))
+
+    def forever(self, *body: Any) -> str:
+        """``control_forever`` – infinite loop."""
+        return self.project.forever(*self._flat(*body))
+
+    def wait_until(self, condition: str) -> str:
+        """``control_wait_until`` – block until condition is true."""
+        return self.project.wait_until(condition)
+
+    def stop(self) -> str:
+        """``control_stop`` – stop all scripts."""
+        return self.project.stop_all()
+
     def repeat_until(self, condition: str, *body: Any) -> str:
         return self.project.repeat_until(condition, *self._flat(*body))
 

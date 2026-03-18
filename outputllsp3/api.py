@@ -8,11 +8,13 @@ Facade classes
 --------------
 - ``VarsAPI``        – variable declare / get / set / change
 - ``ListsAPI``       – list declare, append, clear, item, contains, setitem, delete, insert
-- ``OpsAPI``         – arithmetic, comparison, string, and boolean operators
+- ``OpsAPI``         – arithmetic, comparison, string, boolean operators, random, round, mathop
 - ``WaitAPI``        – wait-for-seconds / wait-for-milliseconds blocks
-- ``SensorAPI``      – IMU and motor sensor readers
-- ``MotorAPI``       – individual motor control (run, stop, relative-position, …)
-- ``MoveAPI``        – drive-base control (forward, turn, pair setup, …)
+- ``SensorAPI``      – IMU axes, timer, loudness, button, color, distance, force, reflectivity
+- ``MotorAPI``       – individual motor control (run, stop, run_for_degrees, speed, …)
+- ``MoveAPI``        – drive-base control (forward, turn, pair setup, steer, …)
+- ``LightAPI``       – 5×5 display (show_text, show_image, set_pixel, clear, …)
+- ``SoundAPI``       – speaker (beep, play, stop, …)
 - ``FlowAPI``        – alias for :class:`flow.FlowBuilder` (procedure, call, if, loops, …)
 - ``DrivebaseAPI``   – PID-runtime installer and high-level robot helpers
 - ``RobotAPI``       – high-level robot API (straight_cm, turn_deg, pivot, stop, …)
@@ -104,13 +106,14 @@ class ListsAPI:
 
 @dataclass
 class OpsAPI:
-    """Arithmetic and comparison facade."""
+    """Arithmetic, comparison, string, and boolean operator facade."""
     project: Any
 
     def add(self, a: Any, b: Any) -> str: return self.project.add(a, b)
     def sub(self, a: Any, b: Any) -> str: return self.project.sub(a, b)
     def mul(self, a: Any, b: Any) -> str: return self.project.mul(a, b)
     def div(self, a: Any, b: Any) -> str: return self.project.div(a, b)
+    def mod(self, a: Any, b: Any) -> str: return self.project.mod(a, b)
     def lt(self, a: Any, b: Any) -> str: return self.project.lt(a, b)
     def gt(self, a: Any, b: Any) -> str: return self.project.gt(a, b)
     def eq(self, a: Any, b: Any) -> str: return self.project.eq(a, b)
@@ -118,12 +121,27 @@ class OpsAPI:
     def and_(self, a: Any, b: Any) -> str: return self.project.and_(a, b)
     def not_(self, value: Any) -> str: return self.project.not_(value)
     def abs(self, value: Any) -> str: return self.project.mathop("abs", value)
+    def round(self, value: Any) -> str: return self.project.round_(value)
+    def join(self, a: Any, b: Any) -> str: return self.project.join(a, b)
+    def length_of(self, value: Any) -> str: return self.project.length_of(value)
+    def letter_of(self, index: Any, value: Any) -> str: return self.project.letter_of(index, value)
+    def str_contains(self, string: Any, substring: Any) -> str: return self.project.str_contains(string, substring)
+    def random(self, from_: Any, to: Any) -> str: return self.project.random(from_, to)
+    def mathop(self, op: str, value: Any) -> str: return self.project.mathop(op, value)
 
 
 @dataclass
 class MoveAPI:
     """Drive-base facade for the most common pair-drive actions."""
     project: Any
+    _wrapper: Any = None
+
+    def _w(self):
+        if self._wrapper is None:
+            from .wrapper import ScratchWrapper
+            self._wrapper = ScratchWrapper(self.project)
+        return self._wrapper
+
     def set_pair(self, pair: str = "AB") -> str: return self.project.set_movement_pair(str(pair))
     def set_motor_pair(self, pair: str = "AB") -> str: return self.set_pair(pair)
     def pair(self, pair: str = "AB") -> str: return self.set_pair(pair)
@@ -133,12 +151,22 @@ class MoveAPI:
     def start_dual_power(self, left: Any, right: Any) -> str: return self.dual_power(left, right)
     def stop(self) -> str: return self.project.stop_moving()
     def stop_move(self) -> str: return self.stop()
+    def steer(self, steering: Any, speed: Any) -> str: return self._w().flippermoremove.start_steer_at_speed(STEERING=steering, SPEED=speed)
+    def steer_for_distance(self, steering: Any, distance: Any, speed: Any, unit: str = "degrees") -> str: return self._w().flippermoremove.steer_distance_at_speed(STEERING=steering, DISTANCE=distance, UNIT=unit, SPEED=speed)
 
 
 @dataclass
 class SensorAPI:
-    """Sensor facade with a convenience yaw helper."""
+    """Sensor facade for IMU, button, color, distance, force, and timer."""
     project: Any
+    _wrapper: Any = None
+
+    def _w(self):
+        if self._wrapper is None:
+            from .wrapper import ScratchWrapper
+            self._wrapper = ScratchWrapper(self.project)
+        return self._wrapper
+
     def reset_yaw(self) -> str: return self.project.reset_yaw()
     def reset(self) -> str: return self.reset_yaw()
     def angle(self, axis: Any = ENUMS.OrientationAxis.YAW) -> str:
@@ -146,15 +174,44 @@ class SensorAPI:
             return self.project.yaw()
         return self.project.add_block("flippersensors_orientationAxis", fields={"AXIS": [str(axis), None]})
     def yaw(self) -> str: return self.angle(ENUMS.OrientationAxis.YAW)
+    def pitch(self) -> str: return self.angle(ENUMS.OrientationAxis.PITCH)
+    def roll(self) -> str: return self.angle(ENUMS.OrientationAxis.ROLL)
+    def timer(self) -> str: return self._w().flippersensors.timer()
+    def reset_timer(self) -> str: return self._w().flippersensors.reset_timer()
+    def loudness(self) -> str: return self._w().flippersensors.loudness()
+    def button_pressed(self, button: str = "center") -> str: return self._w().flippersensors.button_is_pressed(BUTTON=button, EVENT="pressed")
+    def color(self, port: Any) -> str: return self._w().flippersensors.color(PORT=str(port))
+    def is_color(self, port: Any, value: Any) -> str: return self._w().flippersensors.is_color(PORT=str(port), VALUE=value)
+    def distance(self, port: Any) -> str: return self._w().flippersensors.distance(PORT=str(port))
+    def is_distance(self, port: Any, comparator: Any, value: Any) -> str: return self._w().flippersensors.is_distance(PORT=str(port), COMPARATOR=comparator, VALUE=value)
+    def force(self, port: Any) -> str: return self._w().flippersensors.force(PORT=str(port))
+    def is_pressed(self, port: Any) -> str: return self._w().flippersensors.is_pressed(PORT=str(port), OPTION="pressed")
+    def reflectivity(self, port: Any) -> str: return self._w().flippersensors.reflectivity(PORT=str(port))
 
 
 @dataclass
 class MotorAPI:
-    """Low-level motor facade backed by project helpers."""
+    """Individual motor facade backed by project helpers and the wrapper."""
     project: Any
+    _wrapper: Any = None
+
+    def _w(self):
+        if self._wrapper is None:
+            from .wrapper import ScratchWrapper
+            self._wrapper = ScratchWrapper(self.project)
+        return self._wrapper
+
     def relative_position(self, port: Any) -> str: return self.project.motor_relative_position(str(port))
     def set_relative_position(self, port: Any, value: Any) -> str: return self.project.motor_set_relative_position(str(port), value)
     def reset_relative_position(self, port: Any, value: Any = 0) -> str: return self.set_relative_position(port, value)
+    def run(self, port: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_start_speed(PORT=str(port), SPEED=speed)
+    def run_power(self, port: Any, power: Any) -> str: return self._w().flippermoremotor.motor_start_power(PORT=str(port), POWER=power)
+    def stop(self, port: Any) -> str: return self._w().flippermotor.motor_stop(PORT=str(port))
+    def run_for_degrees(self, port: Any, degrees: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=degrees, UNIT="degrees", SPEED=speed)
+    def run_for_seconds(self, port: Any, seconds: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=seconds, UNIT="seconds", SPEED=speed)
+    def set_stop_mode(self, port: Any, mode: str = "brake") -> str: return self._w().flippermoremotor.motor_set_stop_method(PORT=str(port), STOP=mode)
+    def absolute_position(self, port: Any) -> str: return self._w().flippermotor.absolute_position(PORT=str(port))
+    def speed(self, port: Any) -> str: return self._w().flippermotor.speed(PORT=str(port))
 
 
 @dataclass
@@ -169,6 +226,46 @@ class WaitAPI:
     def sleep(self, value: float) -> str: return self.seconds(value)
     def sleep_ms(self, value: int) -> str: return self.ms(value)
     def __call__(self, value: float) -> str: return self.seconds(value)
+
+
+@dataclass
+class LightAPI:
+    """Display / light-matrix facade for the SPIKE hub 5×5 display."""
+    project: Any
+    _wrapper: Any = None
+
+    def _w(self):
+        if self._wrapper is None:
+            from .wrapper import ScratchWrapper
+            self._wrapper = ScratchWrapper(self.project)
+        return self._wrapper
+
+    def show_text(self, text: Any) -> str: return self._w().flipperlight.light_display_text(TEXT=text)
+    def show_image(self, image: Any) -> str: return self._w().flipperlight.light_display_image_on(MATRIX=str(image))
+    def show_image_for(self, image: Any, seconds: Any) -> str: return self._w().flipperlight.light_display_image_on_for_time(MATRIX=str(image), VALUE=seconds)
+    def set_pixel(self, x: Any, y: Any, brightness: Any) -> str: return self._w().flipperlight.light_display_set_pixel(X=x, Y=y, BRIGHTNESS=brightness)
+    def clear(self) -> str: return self._w().flipperlight.light_display_off()
+    def set_brightness(self, brightness: Any) -> str: return self._w().flipperlight.light_display_set_brightness(BRIGHTNESS=brightness)
+    def set_center_button(self, color: Any) -> str: return self._w().flipperlight.center_button_light(COLOR=color)
+
+
+@dataclass
+class SoundAPI:
+    """Sound facade for the SPIKE hub speaker."""
+    project: Any
+    _wrapper: Any = None
+
+    def _w(self):
+        if self._wrapper is None:
+            from .wrapper import ScratchWrapper
+            self._wrapper = ScratchWrapper(self.project)
+        return self._wrapper
+
+    def beep(self, note: Any = 60) -> str: return self._w().flippersound.beep(NOTE=note)
+    def beep_for(self, note: Any, seconds: Any) -> str: return self._w().flippersound.beep_for_time(NOTE=note, DURATION=seconds)
+    def play(self, sound: Any) -> str: return self._w().flippersound.play_sound(SOUND=sound)
+    def play_until_done(self, sound: Any) -> str: return self._w().flippersound.play_sound_until_done(SOUND=sound)
+    def stop(self) -> str: return self._w().flippersound.stop_sound()
 
 
 @dataclass
@@ -409,6 +506,8 @@ class API:
     - `api.flow`
     - `api.vars`
     - `api.ops`
+    - `api.light`
+    - `api.sound`
     - `api.drivebase`
     """
     project: Any
@@ -450,6 +549,8 @@ class API:
         self.sensor = SensorAPI(self.project)
         self.motor = MotorAPI(self.project)
         self.wait = WaitAPI(self.project)
+        self.light = LightAPI(self.project)
+        self.sound = SoundAPI(self.project)
         self.flow = FlowBuilder(self.project)
         self.drivebase = DrivebaseAPI(self.project, self)
         self.wrapper = ScratchWrapper(self.project)
