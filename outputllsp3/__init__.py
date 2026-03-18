@@ -58,7 +58,7 @@ from .schema import SchemaRegistry, bundled_schema
 # ---------------------------------------------------------------------------
 # Authoring facades
 # ---------------------------------------------------------------------------
-from .api import API, RobotAPI
+from .api import API, RobotAPI, LightAPI, SoundAPI
 from .flow import FlowBuilder
 from .wrapper import ScratchWrapper
 from .spikepython import SpikePythonAPI
@@ -126,6 +126,8 @@ __all__ = [
     # Authoring
     "API",
     "RobotAPI",
+    "LightAPI",
+    "SoundAPI",
     "FlowBuilder",
     "ScratchWrapper",
     "SpikePythonAPI",

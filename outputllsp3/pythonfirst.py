@@ -132,6 +132,38 @@ class _RobotModule:
         return None
     def pause_ms(self, ms: int):
         return None
+    def show_text(self, text: Any):
+        return None
+    def show_image(self, image: Any):
+        return None
+    def clear_display(self):
+        return None
+    def beep(self, note: Any = 60, seconds: Any | None = None):
+        return None
+    def stop_sound(self):
+        return None
+    def reset_yaw(self):
+        return None
+    def run_motor(self, port: Any, speed: Any):
+        return None
+    def stop_motor(self, port: Any):
+        return None
+    def motor_run_for_degrees(self, port: Any, degrees: Any, speed: Any):
+        return None
+    def angle(self, axis: Any = "yaw"):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def motor_relative_position(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def motor_speed(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def color(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def distance(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def force(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+    def reflectivity(self, port: Any):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
 
 
 class _PortModule:
@@ -471,6 +503,32 @@ class PythonFirstContext:
                 return self.api.ops.abs(self.compile_expr(expr.args[0], fn_name, params))
             if fname in {'int', 'float'} and expr.args:
                 return self.compile_expr(expr.args[0], fn_name, params)
+            # robot.* expression helpers
+            if fname == 'robot.angle':
+                axis = 'yaw'
+                if expr.args:
+                    a = self.const_eval(expr.args[0])
+                    if isinstance(a, str):
+                        axis = a
+                return self.api.sensor.angle(axis)
+            if fname == 'robot.motor_relative_position' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.motor.relative_position(port)
+            if fname == 'robot.motor_speed' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.motor.speed(port)
+            if fname == 'robot.color' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.sensor.color(port)
+            if fname == 'robot.distance' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.sensor.distance(port)
+            if fname == 'robot.force' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.sensor.force(port)
+            if fname == 'robot.reflectivity' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.sensor.reflectivity(port)
             if fname.endswith('.contains') and isinstance(expr.func, ast.Attribute) and isinstance(expr.func.value, ast.Name):
                 base = expr.func.value.id
                 if base in self.list_decls and expr.args:
@@ -1008,6 +1066,26 @@ class PythonFirstContext:
             return self.api.move.stop()
         if name == 'robot.pause_ms':
             return self.api.wait.ms(args[0] if args else 0)
+        if name == 'robot.show_text':
+            return self.api.light.show_text(args[0] if args else '')
+        if name == 'robot.show_image':
+            return self.api.light.show_image(args[0] if args else 'HEART')
+        if name == 'robot.clear_display':
+            return self.api.light.clear()
+        if name == 'robot.beep':
+            if len(args) >= 2:
+                return self.api.sound.beep_for(args[0], args[1])
+            return self.api.sound.beep(args[0] if args else 60)
+        if name == 'robot.stop_sound':
+            return self.api.sound.stop()
+        if name == 'robot.reset_yaw':
+            return self.api.sensor.reset_yaw()
+        if name == 'robot.run_motor':
+            return self.api.motor.run(args[0] if args else 'A', args[1] if len(args) > 1 else 500)
+        if name == 'robot.stop_motor':
+            return self.api.motor.stop(args[0] if args else 'A')
+        if name == 'robot.motor_run_for_degrees':
+            return self.api.motor.run_for_degrees(args[0] if args else 'A', args[1] if len(args) > 1 else 360, args[2] if len(args) > 2 else 500)
 
         # list operations
         if name.endswith('.append') and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):

@@ -372,8 +372,17 @@ class LLSP3Project:
     def or_(self, a: Any, b: Any) -> str: return self.add_block("operator_or", inputs={"OPERAND1": self._bool_input(a), "OPERAND2": self._bool_input(b)})
     def and_(self, a: Any, b: Any) -> str: return self.add_block("operator_and", inputs={"OPERAND1": self._bool_input(a), "OPERAND2": self._bool_input(b)})
     def not_(self, value: Any) -> str: return self.add_block("operator_not", inputs={"OPERAND": self._bool_input(value)})
+    def mod(self, a: Any, b: Any) -> str: return self.add_block("operator_mod", inputs={"NUM1": self._num_input(a), "NUM2": self._num_input(b)})
+    def round_(self, value: Any) -> str: return self.add_block("operator_round", inputs={"NUM": self._num_input(value)})
+    def join(self, a: Any, b: Any) -> str: return self.add_block("operator_join", inputs={"STRING1": self._text_input(a), "STRING2": self._text_input(b)})
+    def length_of(self, value: Any) -> str: return self.add_block("operator_length", inputs={"STRING": self._text_input(value)})
+    def letter_of(self, index: Any, value: Any) -> str: return self.add_block("operator_letter_of", inputs={"LETTER": self._num_input(index), "STRING": self._text_input(value)})
+    def str_contains(self, string: Any, substring: Any) -> str: return self.add_block("operator_contains", inputs={"STRING1": self._text_input(string), "STRING2": self._text_input(substring)})
+    def random(self, from_: Any, to: Any) -> str: return self.add_block("operator_random", inputs={"FROM": self._num_input(from_), "TO": self._num_input(to)})
     def mathop(self, op: str, value: Any) -> str: return self.add_block("operator_mathop", inputs={"NUM": self._num_input(value)}, fields={"OPERATOR": [op, None]})
     def wait(self, seconds: float) -> str: return self.add_block("control_wait", inputs={"DURATION": self.lit_decimal(seconds)})
+    def wait_until(self, condition: Any) -> str: return self.add_block("control_wait_until", inputs={"CONDITION": self.ref_bool(condition)})
+    def stop_all(self) -> str: return self.add_block("flippercontrol_stop", fields={"STOP_OPTION": ["all", None]}, mutation={"tagName": "mutation", "children": [], "hasnext": "false"})
 
     def if_block(self, condition: str, *substack: str) -> str:
         first = self.chain("TEMP", substack)
