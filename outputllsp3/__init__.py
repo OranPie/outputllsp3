@@ -45,6 +45,7 @@ from .enums import (
     LightImage,
     ColorValue,
 )
+from .locale import set_locale, get_locale, t, available_locales
 
 # ---------------------------------------------------------------------------
 # Core
@@ -111,6 +112,10 @@ __all__ = [
     "OrientationAxis",
     "LightImage",
     "ColorValue",
+    "set_locale",
+    "get_locale",
+    "t",
+    "available_locales",
     # Core
     "LLSP3Document",
     "parse_llsp3",

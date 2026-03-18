@@ -46,6 +46,7 @@ Public API
 from __future__ import annotations
 
 import ast
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,9 @@ from .api import API
 from .project import LLSP3Project
 from .workflow import discover_defaults
 from .enums import Port as _PortEnum
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------
@@ -218,6 +222,7 @@ class PythonFirstContext:
     def note(self, msg: str, node: ast.AST | None = None) -> None:
         line = getattr(node, "lineno", "?") if node is not None else "?"
         self.notes.append(f"L{line}: {msg}")
+        logger.debug(t("pf.note", msg=f"L{line}: {msg}"))
 
     # ---------- top-level analysis ----------
 
@@ -327,6 +332,7 @@ class PythonFirstContext:
     # ---------- compile ----------
 
     def transpile(self, tree: ast.Module):
+        logger.debug(t("pf.parse", path=self.source_path, count=len(tree.body)))
         self.analyze(tree)
         self.declare_resources()
 
@@ -334,6 +340,7 @@ class PythonFirstContext:
         idx = 0
         for fn in self.proc_defs:
             params = [a.arg for a in fn.args.args]
+            logger.debug(t("pf.proc", name=fn.name, arg_count=len(params)))
             # Collect default values for each parameter.
             defaults_map = self._extract_fn_defaults(fn)
             defaults_list = [defaults_map.get(p, "") for p in params]
@@ -358,6 +365,7 @@ class PythonFirstContext:
         if self.main_def is None:
             raise RuntimeError("No @run.main function found")
 
+        logger.debug(t("pf.main", name=self.main_def.name))
         main_body = self.compile_body(self.main_def.body, fn_name=self.main_def.name, params=set())
         start = self.api.flow.start(x=-220, y=90)
         self.api.flow.chain(start, *main_body)
@@ -1060,6 +1068,7 @@ def _load_source(path: str | Path) -> ast.Module:
 
 def transpile_pythonfirst_file(path: str | Path, *, template: str | Path | None = None, strings: str | Path | None = None, out: str | Path = None, sprite_name: str | None = None, strict_verified: bool = False):
     path = Path(path)
+    logger.debug(t("pf.start", path=path))
     defaults = discover_defaults(path.parent)
     template = Path(template) if template else defaults['template']
     strings = Path(strings) if strings else defaults['strings']
@@ -1070,6 +1079,9 @@ def transpile_pythonfirst_file(path: str | Path, *, template: str | Path | None 
     ctx = PythonFirstContext(project, path)
     try:
         ctx.transpile(_load_source(path))
-        return project.save(out)
+        logger.debug(t("pf.save", out=out))
+        result = project.save(out)
+        logger.info(t("pf.done", out=result))
+        return result
     finally:
         project.cleanup()

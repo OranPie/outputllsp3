@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -26,6 +27,9 @@ from typing import Any
 from .api import API
 from .project import LLSP3Project
 from .workflow import discover_defaults
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 def autodiscover(base: str | Path) -> dict[str, Path | None]:
@@ -46,6 +50,7 @@ def autodiscover(base: str | Path) -> dict[str, Path | None]:
 
 def _load_module_from_file(path: str | Path) -> ModuleType:
     path = Path(path).resolve()
+    logger.debug(t("transpile.load_module", path=path))
     spec = importlib.util.spec_from_file_location("outputllsp3_user_module", str(path))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot import {path}")
@@ -62,6 +67,7 @@ def _sanitize_namespace(value: str) -> str:
 
 def _load_package(path: str | Path) -> tuple[ModuleType, Any]:
     path = Path(path).resolve()
+    logger.debug(t("transpile.load_package", path=path))
     pkg_name = path.name
     sys.path.insert(0, str(path.parent))
     module = importlib.import_module(pkg_name)
@@ -85,6 +91,8 @@ def _load_package(path: str | Path) -> tuple[ModuleType, Any]:
 
 
 def transpile_module(module: ModuleType, *, template: str | Path, strings: str | Path, out: str | Path, sprite_name: str = "OutputLLSP3 Generated", namespace: Any = None, function_namespace: bool = False, strict_verified: bool = False) -> Path:
+    mod_name = getattr(module, '__name__', '?')
+    logger.debug(t("transpile.module.start", module=mod_name))
     build = getattr(module, "build", None)
     if not callable(build):
         raise AttributeError("module/package must define build(project, api=None, ns=None)")
@@ -93,27 +101,35 @@ def transpile_module(module: ModuleType, *, template: str | Path, strings: str |
     project.set_strict_verified(strict_verified)
     api = API(project)
     try:
+        logger.debug(t("transpile.module.build_call", module=mod_name))
         build(project, api, namespace)
-        return project.save(out)
+        logger.debug(t("transpile.module.save", out=out))
+        result = project.save(out)
+        logger.info(t("transpile.module.done", out=result))
+        return result
     finally:
         project.cleanup()
 
 
 def transpile_file(path: str | Path, *, template: str | Path, strings: str | Path, out: str | Path, sprite_name: str = "OutputLLSP3 Generated", function_namespace: bool = False, strict_verified: bool = False) -> Path:
+    logger.debug(t("transpile.file.start", path=path))
     mod = _load_module_from_file(path)
     return transpile_module(mod, template=template, strings=strings, out=out, sprite_name=sprite_name, namespace=mod, function_namespace=function_namespace, strict_verified=strict_verified)
 
 
 def transpile_package(path: str | Path, *, template: str | Path, strings: str | Path, out: str | Path, sprite_name: str | None = None, function_namespace: bool = False, strict_verified: bool = False) -> Path:
+    logger.debug(t("transpile.package.start", path=path))
     mod, ns = _load_package(path)
     return transpile_module(mod, template=template, strings=strings, out=out, sprite_name=sprite_name or Path(path).name, namespace=ns, function_namespace=function_namespace, strict_verified=strict_verified)
 
 
 def transpile_path(path: str | Path, *, template: str | Path | None = None, strings: str | Path | None = None, out: str | Path, sprite_name: str | None = None, function_namespace: bool = False, strict_verified: bool = False) -> Path:
     path = Path(path)
+    logger.debug(t("transpile.start", path=path))
     auto = discover_defaults(path if path.is_dir() else path.parent)
     template = Path(template) if template else auto['template']
     strings = Path(strings) if strings else auto['strings']
+    logger.debug(t("transpile.autodiscover", template=template, strings=strings))
     if path.is_dir():
         return transpile_package(path, template=template, strings=strings, out=out, sprite_name=sprite_name, function_namespace=function_namespace, strict_verified=strict_verified)
     return transpile_file(path, template=template, strings=strings, out=out, sprite_name=sprite_name or path.stem, function_namespace=function_namespace, strict_verified=strict_verified)

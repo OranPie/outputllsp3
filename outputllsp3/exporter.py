@@ -45,12 +45,16 @@ from __future__ import annotations
 
 import json
 import keyword
+import logging
 import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from .parser import parse_llsp3
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 def _pyrepr(obj: Any) -> str:
@@ -828,7 +832,9 @@ def _pythonfirst_lines(doc) -> list[str]:
 
 
 def export_llsp3_to_python(path: str, out: str, *, style: str = 'raw') -> str:
+    logger.debug(t("export.start", path=path, style=style))
     doc = parse_llsp3(path)
+    logger.debug(t("export.parse", path=path, block_count=len(doc.blocks), var_count=len(doc.variables)))
     if style == 'raw':
         lines = _raw_lines(doc, style)
     elif style == 'builder':
@@ -837,5 +843,7 @@ def export_llsp3_to_python(path: str, out: str, *, style: str = 'raw') -> str:
         lines = _pythonfirst_lines(doc)
     else:
         raise ValueError(f'Unsupported export style: {style}')
+    logger.debug(t("export.write", out=out))
     Path(out).write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    logger.info(t("export.done", out=out))
     return str(out)

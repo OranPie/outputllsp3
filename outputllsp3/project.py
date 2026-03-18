@@ -387,6 +387,25 @@ class LLSP3Project:
         self._fix_substack_parents(blk, first)
         return blk
 
+    def if_else_block(self, condition: str, substack: tuple[str, ...], substack2: tuple[str, ...]) -> str:
+        first_then = self.chain("TEMP", substack)
+        first_else = self.chain("TEMP", substack2)
+        inputs: dict = {"CONDITION": self.ref_bool(condition)}
+        if first_then:
+            inputs["SUBSTACK"] = self.ref_stmt(first_then)
+        if first_else:
+            inputs["SUBSTACK2"] = self.ref_stmt(first_else)
+        blk = self.add_block("control_if_else", inputs=inputs)
+        self._fix_substack_parents(blk, first_then)
+        self._fix_substack_parents(blk, first_else)
+        return blk
+
+    def forever(self, *substack: str) -> str:
+        first = self.chain("TEMP", substack)
+        blk = self.add_block("control_forever", inputs={**({"SUBSTACK": self.ref_stmt(first)} if first else {})})
+        self._fix_substack_parents(blk, first)
+        return blk
+
     def repeat(self, times: Any, *substack: str) -> str:
         first = self.chain("TEMP", substack)
         blk = self.add_block("control_repeat", inputs={"TIMES": self._num_input(times), **({"SUBSTACK": self.ref_stmt(first)} if first else {})})

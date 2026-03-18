@@ -89,3 +89,19 @@ def test_module_docstrings():
         except Exception as exc:
             missing.append(f'{py_file.name} (import error: {exc})')
     assert missing == [], f"Modules without docstrings: {missing}"
+
+
+def test_locale_exports():
+    """set_locale, get_locale, t, available_locales must be importable."""
+    import outputllsp3
+    assert callable(outputllsp3.set_locale)
+    assert callable(outputllsp3.get_locale)
+    assert callable(outputllsp3.t)
+    assert callable(outputllsp3.available_locales)
+
+
+def test_locale_in_all():
+    """Locale symbols must be in __all__."""
+    import outputllsp3
+    for name in ("set_locale", "get_locale", "t", "available_locales"):
+        assert name in outputllsp3.__all__
