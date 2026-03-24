@@ -23,10 +23,14 @@ PACKAGE_LAYOUT = {
         "locale.py",      # i18n / l10n support (en, zh_CN catalogs; set_locale/t)
     ],
     "core": [
-        "parser.py",      # LLSP3Document + parse_llsp3() – reads .llsp/.llsp3 archives
-        "project.py",     # LLSP3Project – low-level block builder and .llsp3 serialiser
-        "catalog.py",     # BlockCatalog – block-template registry built from strings.json
-        "schema.py",      # SchemaRegistry / bundled_schema – verified-opcode registry
+        "parser.py",                         # LLSP3Document + parse_llsp3() – reads .llsp/.llsp3 archives
+        "project/__init__.py",               # LLSP3Project coordinator (delegates to sub-managers)
+        "project/blocks.py",                 # BlockManager – block creation, chains, operators
+        "project/variables.py",              # VariableManager – variables, lists, namespace
+        "project/procedures.py",             # ProcedureManager – custom blocks define/call/attach
+        "project/serializer.py",             # ProjectSerializer – validate, ZIP I/O, asset hashes
+        "catalog.py",                        # BlockCatalog – block-template registry built from strings.json
+        "schema.py",                         # SchemaRegistry / bundled_schema – verified-opcode registry
     ],
     "authoring": [
         "api.py",         # API, RobotAPI – high-level facade dataclasses (VarsAPI, OpsAPI, …)
@@ -35,12 +39,19 @@ PACKAGE_LAYOUT = {
         "spikepython.py", # SpikePythonAPI – SPIKE Python library facade (hub, motors, sensors)
     ],
     "transpile": [
-        "transpiler.py",      # Classic build-script transpiler (transpile_path/file/module/package)
-        "ast_transpiler.py",  # Python AST → Scratch blocks (transpile_python_source)
-        "pythonfirst.py",     # Python-first decorator transpiler (robot/run/port/ls + transpile_pythonfirst_file)
+        "transpiler.py",                       # Classic build-script transpiler (transpile_path/file/module/package)
+        "ast_transpiler.py",                   # Python AST → Scratch blocks (transpile_python_source)
+        "pythonfirst/__init__.py",             # Python-first package entry point
+        "pythonfirst/runtime.py",              # Runtime stub classes (_RobotModule, _RunModule, etc.)
+        "pythonfirst/registry.py",             # Decorator registry + transpile_pythonfirst_file entry point
+        "pythonfirst/compiler.py",             # AST compiler (PythonFirstContext, LoopContext, ReturnContext)
     ],
     "export": [
-        "exporter.py",    # LLSP3 → Python decompiler (export_llsp3_to_python, raw/builder/python-first)
+        "exporter/__init__.py",   # LLSP3 → Python entry point (export_llsp3_to_python)
+        "exporter/base.py",       # Shared helpers (_summary, _sanitize, _extract_literal, _value_ref)
+        "exporter/raw.py",        # Raw export strategy (exact block reconstruction)
+        "exporter/builder.py",    # Builder export strategy (human-editable exact export)
+        "exporter/python_first.py", # Python-first export strategy (_PFExport decompiler)
     ],
     "workflow": [
         "workflow.py",    # CLI utilities (discover_defaults, doctor_report, init_workspace, roundtrip_llsp3)

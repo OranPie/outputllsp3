@@ -1,47 +1,8 @@
-"""Python-first decorator-based transpiler.
+"""AST-based Python-first compiler.
 
-The *python-first* mode lets authors write LEGO SPIKE programs in idiomatic
-Python using a small set of decorators and runtime helpers, then compiles them
-directly to ``.llsp3`` projects:
-
-.. code-block:: python
-
-    from outputllsp3 import robot, run, port, ls
-
-    @robot.proc
-    def move_square(side=20, speed=420):
-        for _ in range(4):
-            robot.forward_cm(side, speed)
-            robot.turn_deg(90, 260)
-
-    @run.main
-    def main():
-        robot.use_pair(port.B, port.A)
-        move_square()          # all defaults
-        move_square(30)        # override side
-
-Supported constructs
---------------------
-- ``@robot.proc`` / ``@run.main`` decorator-based function definitions
-- Default parameter values and keyword arguments at call sites
-- Return values from ``@robot.proc`` functions
-- ``for _ in range(n)`` loops (constant and variable counts)
-- ``while`` with ``break`` / ``continue`` / ``else``
-- ``if`` / ``elif`` / ``else``
-- Arithmetic, comparison, boolean operators
-- List operations (``ls.list``, ``.append``, ``.get``, ``.set``, ``.contains``, …)
-- ``robot.*`` movement helpers (forward_cm, turn_deg, pivot, stop, …)
-- ``run.sleep`` / ``run.sleep_ms``
-
-Public API
-----------
-- ``robot``  – ``@robot.proc`` decorator + movement helpers namespace
-- ``run``    – ``@run.main`` decorator + sleep helpers
-- ``port``   – port constants (``port.A`` … ``port.F``)
-- ``ls``     – list declaration helper (``ls.list(name)``)
-- ``transpile_pythonfirst_file(path, …)`` – compile and save ``.llsp3``
-- ``reset_pythonfirst_registry()`` – clear the global proc registry (useful
-  for testing multiple programs in the same process)
+``PythonFirstContext`` walks a Python AST and emits LLSP3 blocks via the
+high-level ``API`` facades.  Helper dataclasses ``LoopContext`` and
+``ReturnContext`` track control-flow state during compilation.
 """
 from __future__ import annotations
 
@@ -51,144 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .api import API
-from .project import LLSP3Project
-from .workflow import discover_defaults
-from .enums import Port as _PortEnum
-from .locale import t
+from ..api import API
+from ..project import LLSP3Project
+from ..locale import t
 
 logger = logging.getLogger(__name__)
 
-
-# ----------------------------
-# Public Python-first syntax helpers
-# ----------------------------
-
-class _RuntimeListProxy:
-    def __init__(self, name: str):
-        self.name = name
-    def append(self, item: Any):
-        return None
-    def clear(self):
-        return None
-    def insert(self, index: int, item: Any):
-        return None
-    def remove(self, item: Any):
-        return None
-    def pop(self, index: int = -1):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def contains(self, item: Any):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def get(self, index: int):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def set(self, index: int, value: Any):
-        return None
-    def __len__(self):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def __contains__(self, item: Any):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def __getitem__(self, index: int):
-        raise RuntimeError("outputllsp3 Python-first lists are compiled, not executed directly")
-    def __setitem__(self, index: int, value: Any):
-        return None
-
-
-class _ListModule:
-    def list(self, name: str) -> _RuntimeListProxy:
-        return _RuntimeListProxy(name)
-
-
-class _RunModule:
-    def main(self, fn):
-        fn.__outputllsp3_main__ = True
-        return fn
-    def sleep_ms(self, ms: int):
-        return None
-    def sleep(self, seconds: float):
-        return None
-
-
-class _RobotModule:
-    def proc(self, fn):
-        fn.__outputllsp3_proc__ = True
-        return fn
-    def use_pair(self, right: Any, left: Any):
-        return None
-    def set_direction(self, *, left: int = 1, right: int = -1):
-        return None
-    def forward_cm(self, distance_cm: Any, speed: Any | None = None):
-        return None
-    def forward_deg(self, target_deg: Any, speed: Any | None = None):
-        return None
-    def backward_cm(self, distance_cm: Any, speed: Any | None = None):
-        return None
-    def turn_deg(self, angle_deg: Any, speed: Any | None = None):
-        return None
-    def pivot_left(self, angle_deg: Any, speed: Any | None = None):
-        return None
-    def pivot_right(self, angle_deg: Any, speed: Any | None = None):
-        return None
-    def stop(self):
-        return None
-    def pause_ms(self, ms: int):
-        return None
-    def show_text(self, text: Any):
-        return None
-    def show_image(self, image: Any):
-        return None
-    def clear_display(self):
-        return None
-    def beep(self, note: Any = 60, seconds: Any | None = None):
-        return None
-    def stop_sound(self):
-        return None
-    def reset_yaw(self):
-        return None
-    def run_motor(self, port: Any, speed: Any):
-        return None
-    def stop_motor(self, port: Any):
-        return None
-    def motor_run_for_degrees(self, port: Any, degrees: Any, speed: Any):
-        return None
-    def angle(self, axis: Any = "yaw"):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def motor_relative_position(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def motor_speed(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def color(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def distance(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def force(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-    def reflectivity(self, port: Any):
-        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
-
-
-class _PortModule:
-    A = _PortEnum.A.value
-    B = _PortEnum.B.value
-    C = _PortEnum.C.value
-    D = _PortEnum.D.value
-    E = _PortEnum.E.value
-    F = _PortEnum.F.value
-
-
-robot = _RobotModule()
-run = _RunModule()
-port = _PortModule()
-ls = _ListModule()
-
-
-def reset_pythonfirst_registry():
-    # compatibility no-op; old tracing mode removed in favor of AST compilation
-    return None
-
-
-# ----------------------------
-# AST-based Python-first transpiler
-# ----------------------------
 
 class UnsupportedNode(Exception):
     pass
@@ -197,8 +26,6 @@ class UnsupportedNode(Exception):
 class _ParamRef:
     def __init__(self, name: str):
         self.name = name
-
-
 
 
 @dataclass
@@ -1143,23 +970,3 @@ def _load_source(path: str | Path) -> ast.Module:
     path = Path(path)
     return ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
 
-
-def transpile_pythonfirst_file(path: str | Path, *, template: str | Path | None = None, strings: str | Path | None = None, out: str | Path = None, sprite_name: str | None = None, strict_verified: bool = False):
-    path = Path(path)
-    logger.debug(t("pf.start", path=path))
-    defaults = discover_defaults(path.parent)
-    template = Path(template) if template else defaults['template']
-    strings = Path(strings) if strings else defaults['strings']
-    out = Path(out)
-    project = LLSP3Project(template, strings, sprite_name=sprite_name or out.stem)
-    project.set_default_namespace(path.stem)
-    project.set_strict_verified(strict_verified)
-    ctx = PythonFirstContext(project, path)
-    try:
-        ctx.transpile(_load_source(path))
-        logger.debug(t("pf.save", out=out))
-        result = project.save(out)
-        logger.info(t("pf.done", out=result))
-        return result
-    finally:
-        project.cleanup()

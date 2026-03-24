@@ -3,10 +3,10 @@
 Package layout
 --------------
 infrastructure  version, metadata, enums
-core            parser, project, catalog, schema
+core            parser, project (package), catalog, schema
 authoring       api, flow, wrapper, spikepython
-transpile       transpiler, ast_transpiler, pythonfirst
-export          exporter
+transpile       transpiler, ast_transpiler, pythonfirst (package)
+export          exporter (package)
 workflow        workflow, cli
 
 Quick-start examples

@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import re
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -28,6 +29,7 @@ from .api import API
 from .project import LLSP3Project
 from .workflow import discover_defaults
 from .locale import t
+from .pythonfirst import transpile_pythonfirst_file
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,6 @@ def _load_module_from_file(path: str | Path) -> ModuleType:
 
 
 def _sanitize_namespace(value: str) -> str:
-    import re
     return re.sub(r"[^A-Za-z0-9_]+", "__", value).strip("_")
 
 def _load_package(path: str | Path) -> tuple[ModuleType, Any]:
@@ -133,5 +134,3 @@ def transpile_path(path: str | Path, *, template: str | Path | None = None, stri
     if path.is_dir():
         return transpile_package(path, template=template, strings=strings, out=out, sprite_name=sprite_name, function_namespace=function_namespace, strict_verified=strict_verified)
     return transpile_file(path, template=template, strings=strings, out=out, sprite_name=sprite_name or path.stem, function_namespace=function_namespace, strict_verified=strict_verified)
-
-from .pythonfirst import transpile_pythonfirst_file
