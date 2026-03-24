@@ -21,9 +21,9 @@ import io
 import json
 import zipfile
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -32,24 +32,41 @@ class LLSP3Document:
     manifest: dict[str, Any]
     project: dict[str, Any]
 
+    # Synthetic empty target returned for projects that have no targets at all
+    # (e.g. a brand-new SPIKE app project saved before any blocks are added).
+    _EMPTY_TARGET: ClassVar[dict[str, Any]] = {
+        "name": "Empty",
+        "isStage": True,
+        "blocks": {},
+        "variables": {},
+        "lists": {},
+        "broadcasts": {},
+        "comments": {},
+    }
+
     @property
     def sprite(self) -> dict[str, Any]:
         """Return the primary code-bearing target.
 
-        Real SPIKE app exports place all blocks on the stage target
-        (``isStage: true``) with no additional sprite targets.  We therefore
-        prefer a non-stage target when present (generated projects) and fall
-        back to the stage when it is the only/richest target.
+        Handles three different LLSP3 layouts produced by different tools:
+
+        1. **Generated / round-tripped** — ``targets[1]`` is a non-stage sprite
+           that holds all blocks (the format this library produces).
+        2. **Real SPIKE app (non-empty)** — all blocks live on the stage target
+           (``isStage: true``); there is no additional sprite target.
+        3. **Real SPIKE app (empty project)** — ``targets`` is an empty list
+           (project saved before any blocks were added).  Returns a synthetic
+           empty target so callers can handle it gracefully instead of crashing.
         """
         targets = self.project.get("targets", [])
         if not targets:
-            raise ValueError("No targets found in project.json")
-        # Prefer the non-stage target (generated / round-tripped projects)
+            # Empty project — return synthetic target with no blocks
+            return dict(self._EMPTY_TARGET)
+        # Prefer a non-stage target (generated projects)
         for target in targets:
             if not target.get("isStage"):
                 return target
-        # Fall back: real SPIKE app exports — code lives on the stage
-        # Pick the target with the most blocks (usually the only one)
+        # Fall back: real SPIKE app — code lives on the stage (pick richest)
         return max(targets, key=lambda t: len(t.get("blocks", {})))
 
     @property
