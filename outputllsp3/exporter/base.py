@@ -17,6 +17,90 @@ def _pyrepr(obj: Any) -> str:
     return repr(obj)
 
 
+# ── Pretty block formatting ───────────────────────────────────────────────────
+
+_BLOCK_KEY_ORDER = ('opcode', 'inputs', 'fields', 'next', 'parent',
+                    'shadow', 'topLevel', 'mutation', 'x', 'y')
+
+
+def _val_repr(v: object) -> str:
+    """Format a JSON-compatible value as a Python literal (True/False/None)."""
+    if v is None:
+        return 'None'
+    if isinstance(v, bool):
+        return 'True' if v else 'False'
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return repr(v)
+    if isinstance(v, list):
+        return '[' + ', '.join(_val_repr(x) for x in v) + ']'
+    if isinstance(v, dict):
+        if not v:
+            return '{}'
+        parts = ', '.join(f'{k!r}: {_val_repr(vv)}' for k, vv in v.items())
+        return '{' + parts + '}'
+    return repr(v)
+
+
+def _fmt_block_dict(block: dict, indent: str = '    ') -> str:
+    """Format a Scratch block as a readable multi-line Python dict literal.
+
+    Skips noise-free defaults (shadow=False, topLevel=False, comment=None)
+    so only meaningful fields are shown.
+    """
+    pad = indent + '    '
+    lines = ['{']
+    ordered = [k for k in _BLOCK_KEY_ORDER if k in block] + \
+              [k for k in block if k not in _BLOCK_KEY_ORDER]
+    for key in ordered:
+        val = block[key]
+        # Omit low-value defaults to reduce visual noise
+        if key == 'shadow' and val is False:
+            continue
+        if key == 'topLevel' and val is False:
+            continue
+        if key == 'comment' and val is None:
+            continue
+        if key == 'mutation' and not val:
+            continue
+        lines.append(f"{pad}'{key}': {_val_repr(val)},")
+    lines.append(f'{indent}}}')
+    return '\n'.join(lines)
+
+
+def _block_hint(opcode: str, block: dict, label: str) -> str:
+    """Build a rich comment like 'motor: run (direction)  [DIRECTION=clockwise]'."""
+    fields = block.get('fields', {})
+    hints = []
+    for k, v in fields.items():
+        if not (isinstance(v, list) and v and v[0] is not None):
+            continue
+        # Shorten verbose SPIKE field keys: 'field_flippermotor_menu_foo' → 'foo'
+        short_k = k
+        if short_k.startswith('field_'):
+            short_k = short_k[6:]
+        # Strip known namespace prefixes
+        for prefix in (
+            'flippermotor_', 'flippermove_', 'flippermoremove_',
+            'flippermoremotor_', 'flippersensors_', 'flipperevents_',
+            'flipperlight_', 'flippersound_', 'flippermore_',
+            'flippermoresensors_', 'flippermusic_', 'flipperoperator_',
+            'flippercontrol_', 'horizontalmotor_', 'horizontalmove_',
+            'horizontalevents_',
+        ):
+            if short_k.startswith(prefix):
+                short_k = short_k[len(prefix):]
+                break
+        # Strip inner _menu_ sub-prefix
+        if '_menu_' in short_k:
+            short_k = short_k.split('_menu_')[-1]
+        hints.append(f'{short_k}={v[0]}')
+    if hints:
+        return f'{label}  [{", ".join(hints)}]'
+    return label
+
+
 def _summary(doc) -> dict[str, Any]:
     blocks = doc.blocks
     opcode_counts = Counter(b.get("opcode") for b in blocks.values())
