@@ -66,6 +66,197 @@ class FlowBuilder:
             self.project.add_comment(start, self._caller_reference(), x=x + 220, y=y - 10, width=300, height=90)
         return start
 
+    def when(
+        self,
+        event_type: str,
+        *body: Any,
+        x: int | None = None,
+        y: int | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Create an event handler hat block.
+
+        The returned block ID is a top-level hat that fires when the named
+        event occurs.  Body blocks are chained directly below it.  Position is
+        drawn from ``layout.next_event()`` unless *x*/*y* are provided.
+
+        Parameters
+        ----------
+        event_type : str
+            Type of event.  Supported values and their extra kwargs:
+
+            ``'button'``       – ``button='left'|'right'|'center'|'any'``,
+                                 ``action='pressed'|'released'``
+            ``'gesture'``      – ``gesture='tapped'|'doubletapped'|'shake'|'freefall'``
+            ``'orientation'``  – ``value='front'|'back'|'up'|'upside-down'|'leftside-up'|'rightside-up'``
+            ``'tilted'``       – ``direction='any'|'front'|'back'|'leftside'|'rightside'``
+            ``'timer'``        – ``threshold=5.0``
+            ``'color'``        – ``port=Port.A``, ``color='any'|'red'|'blue'|...``
+            ``'force'``        – ``port=Port.A``,
+                                 ``option='pressed'|'hardpressed'|'released'|'pressurechanged'``
+            ``'near'``         – ``port=Port.A``  (closer-than distance event)
+            ``'far'``          – ``port=Port.A``  (farther-than distance event)
+            ``'distance'``     – ``port=Port.A``,
+                                 ``comparator='less_than'|'greater_than'``,
+                                 ``value=10``
+            ``'broadcast'``    – ``message='my_message'``
+            ``'condition'``    – ``condition=<boolean_block_id>``
+        *body : block IDs
+            Blocks to run when the event fires.
+        x, y : int, optional
+            Canvas position (auto-assigned from layout if omitted).
+        **kwargs
+            Event-specific keyword arguments (see table above).
+
+        Returns
+        -------
+        str
+            The hat block ID.
+        """
+        if x is None or y is None:
+            ax, ay = self.layout.next_event() if self.layout is not None else (250, 90)
+            x = ax if x is None else x
+            y = ay if y is None else y
+
+        proj = self.project
+        ev = event_type.lower()
+
+        # ── Helper: shadow menu block ──────────────────────────────────────────
+        def _menu(opcode: str, field_key: str, value: Any) -> str:
+            return proj.add_block(opcode, shadow=True,
+                                  fields={field_key: [str(value), None]})
+
+        def _port(raw: Any) -> str:
+            """Normalise Port enum / plain string to a letter like 'A'."""
+            return raw.value if hasattr(raw, 'value') else str(raw)
+
+        # ── Hat block per event type ───────────────────────────────────────────
+        if ev == 'button':
+            btn = kwargs.get('button', 'left')
+            evt = kwargs.get('action', kwargs.get('event', 'pressed'))
+            hat = proj.add_block(
+                'flipperevents_whenButton', top_level=True, x=x, y=y,
+                fields={'BUTTON': [btn, None], 'EVENT': [evt, None]},
+            )
+
+        elif ev == 'gesture':
+            gest = kwargs.get('gesture', 'tapped')
+            hat = proj.add_block(
+                'flipperevents_whenGesture', top_level=True, x=x, y=y,
+                fields={'EVENT': [gest, None]},
+            )
+
+        elif ev == 'orientation':
+            val = kwargs.get('value', 'front')
+            hat = proj.add_block(
+                'flipperevents_whenOrientation', top_level=True, x=x, y=y,
+                fields={'VALUE': [val, None]},
+            )
+
+        elif ev == 'tilted':
+            direction = kwargs.get('direction', 'any')
+            tilt_m = _menu('flipperevents_custom-tilted',
+                           'field_flipperevents_custom-tilted', direction)
+            hat = proj.add_block(
+                'flipperevents_whenTilted', top_level=True, x=x, y=y,
+                inputs={'VALUE': proj.ref_menu(tilt_m)},
+            )
+
+        elif ev == 'timer':
+            threshold = kwargs.get('threshold', 5.0)
+            hat = proj.add_block(
+                'flipperevents_whenTimer', top_level=True, x=x, y=y,
+                inputs={'VALUE': proj.lit_number(threshold)},
+            )
+
+        elif ev == 'color':
+            port = _port(kwargs.get('port', 'A'))
+            color = str(kwargs.get('color', 'any'))
+            port_m = _menu('flipperevents_color-sensor-selector',
+                           'field_flipperevents_color-sensor-selector', port)
+            color_m = _menu('flipperevents_color-selector',
+                            'field_flipperevents_color-selector', color)
+            hat = proj.add_block(
+                'flipperevents_whenColor', top_level=True, x=x, y=y,
+                inputs={
+                    'PORT': proj.ref_menu(port_m),
+                    'OPTION': proj.ref_menu(color_m),
+                },
+            )
+
+        elif ev in ('force', 'pressed'):
+            port = _port(kwargs.get('port', 'A'))
+            option = kwargs.get('option', 'pressed')
+            port_m = _menu('flipperevents_force-sensor-selector',
+                           'field_flipperevents_force-sensor-selector', port)
+            hat = proj.add_block(
+                'flipperevents_whenPressed', top_level=True, x=x, y=y,
+                inputs={'PORT': proj.ref_menu(port_m)},
+                fields={'OPTION': [option, None]},
+            )
+
+        elif ev in ('near', 'far', 'near_or_far'):
+            # Map near/far to whenDistance with appropriate comparator
+            port = _port(kwargs.get('port', 'A'))
+            default_cmp = 'less_than' if ev == 'near' else 'greater_than'
+            comparator = kwargs.get('comparator', default_cmp)
+            value = kwargs.get('value', 10)
+            port_m = _menu('flipperevents_distance-sensor-selector',
+                           'field_flipperevents_distance-sensor-selector', port)
+            hat = proj.add_block(
+                'flipperevents_whenDistance', top_level=True, x=x, y=y,
+                inputs={
+                    'PORT': proj.ref_menu(port_m),
+                    'VALUE': proj._num_input(value),
+                },
+                fields={'COMPARATOR': [comparator, None]},
+            )
+
+        elif ev == 'distance':
+            port = _port(kwargs.get('port', 'A'))
+            comparator = kwargs.get('comparator', 'less_than')
+            value = kwargs.get('value', 10)
+            port_m = _menu('flipperevents_distance-sensor-selector',
+                           'field_flipperevents_distance-sensor-selector', port)
+            hat = proj.add_block(
+                'flipperevents_whenDistance', top_level=True, x=x, y=y,
+                inputs={
+                    'PORT': proj.ref_menu(port_m),
+                    'VALUE': proj._num_input(value),
+                },
+                fields={'COMPARATOR': [comparator, None]},
+            )
+
+        elif ev in ('broadcast', 'message'):
+            # Use standard Scratch broadcast-receive (registered in catalog)
+            message = kwargs.get('message', 'message1')
+            hat = proj.add_block(
+                'event_whenbroadcastreceived', top_level=True, x=x, y=y,
+                fields={'BROADCAST_OPTION': [message, None]},
+            )
+
+        elif ev == 'condition':
+            cond = kwargs.get('condition')
+            inputs = {}
+            if cond is not None:
+                inputs['CONDITION'] = proj.ref_bool(cond)
+            hat = proj.add_block(
+                'flipperevents_whenCondition', top_level=True, x=x, y=y,
+                inputs=inputs,
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown event_type {event_type!r}.  Valid values: "
+                "button, gesture, orientation, tilted, timer, color, "
+                "force, near, far, distance, broadcast, condition"
+            )
+
+        # Chain body blocks below the hat
+        first = proj.chain(hat, self._flat(*body))
+        proj.blocks[hat]['next'] = first
+        return hat
+
     def if_(self, condition: str, *body: Any) -> str:
         return self.project.if_block(condition, *self._flat(*body))
 

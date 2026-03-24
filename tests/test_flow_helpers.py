@@ -102,3 +102,123 @@ class TestCond:
         false_blk = project.wait(0.2)
         result = flow.cond(cond_blk, true_blk, false_blk)
         assert project.blocks[result]["opcode"] == "control_if_else"
+
+
+class TestWhenEvent:
+    """Tests for FlowBuilder.when() – event handler hat creation."""
+
+    def _make_flow(self, project):
+        from outputllsp3.project.layout import LayoutManager
+        return FlowBuilder(project, LayoutManager())
+
+    def test_button_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('button', button='left', action='pressed')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenButton'
+
+    def test_button_fields(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('button', button='right', action='released')
+        fields = project.blocks[bid]['fields']
+        assert fields['BUTTON'][0] == 'right'
+        assert fields['EVENT'][0] == 'released'
+
+    def test_gesture_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('gesture', gesture='shake')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenGesture'
+        assert project.blocks[bid]['fields']['EVENT'][0] == 'shake'
+
+    def test_orientation_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('orientation', value='upside-down')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenOrientation'
+        assert project.blocks[bid]['fields']['VALUE'][0] == 'upside-down'
+
+    def test_tilted_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('tilted', direction='front')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenTilted'
+        # Tilted uses an input menu (shadow block)
+        assert 'VALUE' in project.blocks[bid]['inputs']
+
+    def test_timer_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('timer', threshold=7.5)
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenTimer'
+
+    def test_color_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('color', port='A', color='red')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenColor'
+
+    def test_force_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('force', port='A', option='pressed')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenPressed'
+        assert project.blocks[bid]['fields']['OPTION'][0] == 'pressed'
+
+    def test_near_maps_to_distance(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('near', port='A', value=15)
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenDistance'
+        assert project.blocks[bid]['fields']['COMPARATOR'][0] == 'less_than'
+
+    def test_far_maps_to_distance(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('far', port='A', value=30)
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenDistance'
+        assert project.blocks[bid]['fields']['COMPARATOR'][0] == 'greater_than'
+
+    def test_distance_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('distance', port='B', comparator='greater_than', value=20)
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenDistance'
+        assert project.blocks[bid]['fields']['COMPARATOR'][0] == 'greater_than'
+
+    def test_broadcast_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('broadcast', message='go!')
+        assert project.blocks[bid]['opcode'] == 'event_whenbroadcastreceived'
+        assert project.blocks[bid]['fields']['BROADCAST_OPTION'][0] == 'go!'
+
+    def test_condition_opcode(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('condition')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenCondition'
+
+    def test_body_chained(self, project):
+        flow = self._make_flow(project)
+        body = project.wait(0.5)
+        bid = flow.when('button', body, button='left')
+        assert project.blocks[bid]['next'] == body
+
+    def test_is_top_level(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('gesture', gesture='tapped')
+        assert project.blocks[bid]['topLevel'] is True
+
+    def test_uses_event_x_position(self, project):
+        """Default position comes from layout.next_event() (x ≈ 250)."""
+        from outputllsp3.project.layout import LayoutManager
+        lm = LayoutManager()
+        flow = FlowBuilder(project, lm)
+        bid = flow.when('button')
+        assert project.blocks[bid]['x'] == 250
+
+    def test_explicit_position_overrides(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('gesture', x=999, y=888, gesture='tapped')
+        assert project.blocks[bid]['x'] == 999
+        assert project.blocks[bid]['y'] == 888
+
+    def test_case_insensitive(self, project):
+        flow = self._make_flow(project)
+        bid = flow.when('BUTTON', button='left')
+        assert project.blocks[bid]['opcode'] == 'flipperevents_whenButton'
+
+    def test_unknown_event_raises(self, project):
+        flow = self._make_flow(project)
+        import pytest
+        with pytest.raises(ValueError, match="Unknown event_type"):
+            flow.when('bad_event_name')
