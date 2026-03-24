@@ -34,10 +34,23 @@ class LLSP3Document:
 
     @property
     def sprite(self) -> dict[str, Any]:
-        for target in self.project.get("targets", []):
+        """Return the primary code-bearing target.
+
+        Real SPIKE app exports place all blocks on the stage target
+        (``isStage: true``) with no additional sprite targets.  We therefore
+        prefer a non-stage target when present (generated projects) and fall
+        back to the stage when it is the only/richest target.
+        """
+        targets = self.project.get("targets", [])
+        if not targets:
+            raise ValueError("No targets found in project.json")
+        # Prefer the non-stage target (generated / round-tripped projects)
+        for target in targets:
             if not target.get("isStage"):
                 return target
-        raise ValueError("No sprite target found in project.json")
+        # Fall back: real SPIKE app exports — code lives on the stage
+        # Pick the target with the most blocks (usually the only one)
+        return max(targets, key=lambda t: len(t.get("blocks", {})))
 
     @property
     def blocks(self) -> dict[str, dict[str, Any]]:

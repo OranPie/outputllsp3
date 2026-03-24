@@ -85,10 +85,13 @@ def _menu_schema_for_ref(blocks: dict[str, dict[str, Any]], payload: list[Any]) 
 
 
 def learn_schema_from_project(project: dict[str, Any]) -> dict[str, OpcodeSchema]:
+    """Learn opcode schemas from all targets in a project.
+
+    Real SPIKE app exports place all blocks on the stage target; generated
+    projects use a sprite target.  We process all targets so both cases work.
+    """
     schemas: dict[str, OpcodeSchema] = {}
     for target in project.get('targets', []):
-        if target.get('isStage'):
-            continue
         blocks = target.get('blocks', {})
         for bid, block in blocks.items():
             opcode = block.get('opcode')
