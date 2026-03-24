@@ -288,6 +288,21 @@ class _PFExport:
             value = self.render_expr(block.get('inputs', {}).get('VALUE'))
             return f'robot.is_reflected_light(port.{port_name}, {comp!r}, {value})'
 
+        # Generic SPIKE widget/selector block — no inputs, one field named
+        # 'field_{opcode}' (e.g. flippermove_rotation-wheel, custom-icon-direction,
+        # multiple-port-selector, etc.).  Return the raw field value as a Python
+        # literal so steering, direction and port menus resolve correctly.
+        if op and not block.get('inputs'):
+            field_key = f'field_{op}'
+            raw = block.get('fields', {}).get(field_key)
+            if raw and isinstance(raw, list) and raw[0] is not None:
+                val = raw[0]
+                try:
+                    f = float(val)
+                    return str(int(f)) if f == int(f) else str(f)
+                except (ValueError, TypeError):
+                    return repr(val)
+
         self._unknown_exprs.add(op or 'unknown')
         return f'0  # TODO: {op!r}'
 
