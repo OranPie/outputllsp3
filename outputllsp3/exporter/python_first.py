@@ -288,6 +288,39 @@ class _PFExport:
             value = self.render_expr(block.get('inputs', {}).get('VALUE'))
             return f'robot.is_reflected_light(port.{port_name}, {comp!r}, {value})'
 
+        # ── IMU / orientation (flippermoresensors_*) ──────────────────────────
+        if op == 'flippermoresensors_orientation':
+            return 'robot.orientation()'
+        if op == 'flippermoresensors_motion':
+            return 'robot.motion()'
+        if op == 'flippermoresensors_acceleration':
+            axis = block.get('fields', {}).get('AXIS', ['x'])[0]
+            return f'robot.acceleration({axis!r})'
+        if op == 'flippermoresensors_angularVelocity':
+            axis = block.get('fields', {}).get('AXIS', ['x'])[0]
+            return f'robot.angular_velocity({axis!r})'
+        # ── Raw/extra sensor reporters ─────────────────────────────────────────
+        if op == 'flippersensors_rawColor':
+            port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
+            return f'robot.raw_color(port.{port_name})'
+        if op == 'flippersensors_colorValue':
+            port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
+            return f'robot.color_value(port.{port_name})'
+        # ── Hub button pressed (flipperlight / flippersensors variants) ────────
+        if op in {'flipperlight_buttonIsPressed', 'flippersensors_hubButtonIsPressed'}:
+            button = block.get('fields', {}).get('BUTTON', ['center'])[0]
+            return f'robot.hub_button_pressed({button!r})'
+        # ── Raw port value ─────────────────────────────────────────────────────
+        if op == 'flippermore_port':
+            port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
+            return f'robot.port_value(port.{port_name})'
+        # ── Timer (flipperevents_ alias) ───────────────────────────────────────
+        if op == 'flipperevents_timer':
+            return 'run.timer()'
+        # ── Music reporter ─────────────────────────────────────────────────────
+        if op == 'flippermusic_getTempo':
+            return 'robot.tempo()'
+
         # Generic SPIKE widget/selector block — no inputs, one field named
         # 'field_{opcode}' (e.g. flippermove_rotation-wheel, custom-icon-direction,
         # multiple-port-selector, etc.).  Return the raw field value as a Python
@@ -705,6 +738,141 @@ class _PFExport:
             value = self.render_expr(ins.get('VALUE'))
             return [f'{indent}robot.change_sound_effect({effect!r}, {value})']
 
+        # ── IMU / orientation (flippermoresensors_*) ──────────────────────────
+        if op == 'flippermoresensors_setOrientation':
+            up   = self._menu_value(ins.get('UP'))   or 'front'
+            front = self._menu_value(ins.get('FRONT')) or 'up'
+            return [f'{indent}robot.set_orientation({up!r}, {front!r})']
+
+        # ── Hub display — show image permanently (no timer) ───────────────────
+        if op == 'flipperlight_lightDisplayImageOn':
+            matrix = self.render_expr(ins.get('MATRIX'))
+            return [f'{indent}robot.hub_show_image({matrix})']
+
+        # ── Color matrix accessory (flipperlight_lightColorMatrix*) ───────────
+        if op == 'flipperlight_lightColorMatrixImageOn':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            image = self.render_expr(ins.get('IMAGE'))
+            return [f'{indent}robot.color_matrix(port.{port_name}, {image})']
+        if op == 'flipperlight_lightColorMatrixImageOnForTime':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            image = self.render_expr(ins.get('IMAGE'))
+            duration = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.color_matrix_for(port.{port_name}, {image}, {duration})']
+        if op == 'flipperlight_lightColorMatrixOff':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            return [f'{indent}robot.color_matrix_off(port.{port_name})']
+        if op == 'flipperlight_lightColorMatrixSetBrightness':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            brightness = self.render_expr(ins.get('BRIGHTNESS'))
+            return [f'{indent}robot.color_matrix_brightness(port.{port_name}, {brightness})']
+        if op == 'flipperlight_lightColorMatrixSetPixel':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            x = self.render_expr(ins.get('X'))
+            y = self.render_expr(ins.get('Y'))
+            color = self.render_expr(ins.get('COLOR'))
+            return [f'{indent}robot.color_matrix_pixel(port.{port_name}, {x}, {y}, {color})']
+        if op == 'flipperlight_lightColorMatrixRotate':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
+            return [f'{indent}robot.color_matrix_rotate(port.{port_name}, {direction!r})']
+        if op == 'flipperlight_lightColorMatrixSetOrientation':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            orientation = self._menu_value(ins.get('ORIENTATION')) or 'upright'
+            return [f'{indent}robot.color_matrix_orientation(port.{port_name}, {orientation!r})']
+
+        # ── Misc / flippermore ────────────────────────────────────────────────
+        if op == 'flippermore_stopOtherStacks':
+            return [f'{indent}run.stop_other_stacks()']
+
+        # ── Timer alias (flipperevents_resetTimer) ────────────────────────────
+        if op == 'flipperevents_resetTimer':
+            return [f'{indent}run.reset_timer()']
+
+        # ── Opcode aliases: flippermotor_* mirroring flippermoremotor_* ───────
+        if op == 'flippermotor_motorSetAcceleration':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            accel = self.render_expr(ins.get('ACCELERATION'))
+            return [f'{indent}robot.set_motor_acceleration(port.{port_name}, {accel})']
+        if op == 'flippermotor_motorSetStopMethod':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            mode = flds.get('STOP', ['coast'])[0].lower()
+            return [f'{indent}robot.set_stop_mode(port.{port_name}, {mode!r})']
+
+        # ── Opcode aliases: flippermove_* mirroring flippermoremove_* ─────────
+        if op == 'flippermove_movementSetAcceleration':
+            accel = self.render_expr(ins.get('ACCELERATION'))
+            return [f'{indent}robot.set_move_acceleration({accel})']
+        if op == 'flippermove_movementSetStopMethod':
+            mode = flds.get('STOP', ['coast'])[0].lower()
+            return [f'{indent}robot.set_move_stop_mode({mode!r})']
+        if op == 'flippermove_startDualSpeed':
+            left = self.render_expr(ins.get('LEFT'))
+            right = self.render_expr(ins.get('RIGHT'))
+            return [f'{indent}robot.drive({left}, {right})']
+
+        # ── Music (flippermusic_*) ─────────────────────────────────────────────
+        if op == 'flippermusic_playDrumForBeats':
+            drum = self.render_expr(ins.get('DRUM'))
+            beats = self.render_expr(ins.get('BEATS'))
+            return [f'{indent}robot.play_drum({drum}, {beats})']
+        if op == 'flippermusic_playNoteForBeats':
+            note = self.render_expr(ins.get('NOTE'))
+            beats = self.render_expr(ins.get('BEATS'))
+            return [f'{indent}robot.play_note({note}, {beats})']
+        if op == 'flippermusic_setTempo':
+            tempo = self.render_expr(ins.get('TEMPO'))
+            return [f'{indent}robot.set_tempo({tempo})']
+        if op == 'flippermusic_setInstrument':
+            instrument = self.render_expr(ins.get('INSTRUMENT'))
+            return [f'{indent}robot.set_instrument({instrument})']
+
+        # ── Horizontal (icon) mode blocks — motor ─────────────────────────────
+        if op == 'horizontalmotor_motorTurnClockwiseRotations':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            rotations = self.render_expr(ins.get('ROTATIONS'))
+            return [f'{indent}robot.run_motor_for(port.{port_name}, {rotations!r}, \'rotations\', 100)']
+        if op == 'horizontalmotor_motorTurnCounterClockwiseRotations':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            rotations = self.render_expr(ins.get('ROTATIONS'))
+            return [f"{indent}robot.run_motor_for(port.{port_name}, 'counterclockwise', {rotations}, 'rotations')"]
+        if op == 'horizontalmotor_motorSetSpeed':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.set_motor_speed(port.{port_name}, {speed})']
+        if op == 'horizontalmotor_motorStop':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            return [f'{indent}robot.stop_motor(port.{port_name})']
+
+        # ── Horizontal (icon) mode blocks — movement ──────────────────────────
+        if op == 'horizontalmove_moveForward':
+            value = self.render_expr(ins.get('VALUE'))
+            return [f"{indent}robot.move('forward', {value})"]
+        if op == 'horizontalmove_moveBackward':
+            value = self.render_expr(ins.get('VALUE'))
+            return [f"{indent}robot.move('back', {value})"]
+        if op == 'horizontalmove_moveTurnClockwiseRotations':
+            rotations = self.render_expr(ins.get('ROTATIONS'))
+            return [f"{indent}robot.steer(100, {rotations}, 'rotations')"]
+        if op == 'horizontalmove_moveTurnCounterClockwiseRotations':
+            rotations = self.render_expr(ins.get('ROTATIONS'))
+            return [f"{indent}robot.steer(-100, {rotations}, 'rotations')"]
+        if op == 'horizontalmove_moveSetSpeed':
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.set_move_speed({speed})']
+        if op == 'horizontalmove_moveStop':
+            return [f'{indent}robot.stop()']
+
+        # ── Horizontal (icon) mode — control/display ──────────────────────────
+        if op == 'horizontalcontrol_stopOtherStacks':
+            return [f'{indent}run.stop_other_stacks()']
+        if op == 'horizontaldisplay_ledMatrix':
+            matrix = self.render_expr(ins.get('MATRIX'))
+            return [f'{indent}robot.hub_show_image({matrix})']
+        if op == 'horizontaldisplay_ledImage':
+            image = self.render_expr(ins.get('IMAGE'))
+            return [f'{indent}robot.hub_show_image({image})']
+
         self._unknown_stmts.add(op or 'unknown')
         return [f'{indent}pass  # TODO: {op!r}']
 
@@ -814,6 +982,59 @@ class _PFExport:
                 broadcast = b.get('fields', {}).get('BROADCAST_OPTION', ['message1'])[0]
                 fn = _fn_name('on_broadcast')
                 event_chunks.append([f'@run.when_broadcast({broadcast!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenBroadcast':
+                broadcast = b.get('fields', {}).get('BROADCAST', ['message1'])[0]
+                fn = _fn_name('on_broadcast')
+                event_chunks.append([f'@run.when_broadcast({broadcast!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenNearOrFar':
+                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                option = b.get('fields', {}).get('OPTION', ['near'])[0]
+                fn = _fn_name('on_near_or_far')
+                event_chunks.append([f'@run.when_near_or_far(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenDistance':
+                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                comp = b.get('fields', {}).get('COMPARATOR', ['less_than'])[0]
+                value = self.render_expr(b.get('inputs', {}).get('VALUE'))
+                fn = _fn_name('on_distance')
+                event_chunks.append([f'@run.when_distance(port.{port_name}, {comp!r}, {value})', f'def {fn}():', *body_lines, ''])
+
+            # ── Horizontal (icon) events ────────────────────────────────────────
+            elif evop == 'horizontalevents_whenProgramStarts':
+                main_counter[0] += 1
+                fn = 'main' if main_counter[0] == 1 else f'main_{main_counter[0]}'
+                event_chunks.append(['@run.main', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenBroadcast':
+                broadcast = b.get('fields', {}).get('BROADCAST', ['message1'])[0]
+                fn = _fn_name('on_broadcast')
+                event_chunks.append([f'@run.when_broadcast({broadcast!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenCloserThan':
+                value = self.render_expr(b.get('inputs', {}).get('VALUE'))
+                fn = _fn_name('on_closer_than')
+                event_chunks.append([f'@run.when_distance_closer_than({value})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenColor':
+                color = self._menu_value(b.get('inputs', {}).get('COLOR')) or 'any'
+                fn = _fn_name('on_color')
+                event_chunks.append([f'@run.when_color(port.A, {color!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenPressed':
+                fn = _fn_name('on_pressed')
+                event_chunks.append(["@run.when_pressed(port.A, 'pressed')", f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenTilted':
+                direction = b.get('fields', {}).get('DIRECTION', ['any'])[0]
+                fn = _fn_name('on_tilted')
+                event_chunks.append([f'@run.when_tilted({direction!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'horizontalevents_whenLouderThan':
+                value = self.render_expr(b.get('inputs', {}).get('VALUE'))
+                fn = _fn_name('on_louder_than')
+                event_chunks.append([f'@run.when_louder_than({value})', f'def {fn}():', *body_lines, ''])
 
             elif evop in {
                 'procedures_definition', 'procedures_prototype',
