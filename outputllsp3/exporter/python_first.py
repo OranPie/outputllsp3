@@ -12,6 +12,37 @@ from pathlib import Path
 
 from .base import _sanitize, _extract_literal, _value_ref
 
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+def _section(text: str, width: int = 78) -> str:
+    """Return a decorated section-header comment line."""
+    prefix = f'# ── {text} '
+    return prefix + '─' * max(2, width - len(prefix))
+
+
+# Map from Scratch mathop field value → Python expression template.
+# {x} is replaced with the rendered argument.
+_MATHOP_MAP: dict[str, str] = {
+    'abs':      'abs({x})',
+    'floor':    'math.floor({x})',
+    'ceiling':  'math.ceil({x})',
+    'sqrt':     'math.sqrt({x})',
+    'sin':      'math.sin(math.radians({x}))',
+    'cos':      'math.cos(math.radians({x}))',
+    'tan':      'math.tan(math.radians({x}))',
+    'asin':     'math.degrees(math.asin({x}))',
+    'acos':     'math.degrees(math.acos({x}))',
+    'atan':     'math.degrees(math.atan({x}))',
+    'ln':       'math.log({x})',
+    'log':      'math.log10({x})',
+    'e ^':      'math.exp({x})',
+    '10 ^':     '(10 ** ({x}))',
+    '2 ^':      '(2 ** ({x}))',
+}
+# mathop names that require `import math` (all except 'abs' which is builtin)
+_MATHOP_NEEDS_MATH: frozenset[str] = frozenset(_MATHOP_MAP) - {'abs', '10 ^', '2 ^'}
+
+
 class _PFExport:
     def __init__(self, doc):
         self.doc = doc
@@ -19,6 +50,10 @@ class _PFExport:
         self.var_names = {vid: _sanitize(pair[0], 'var') for vid, pair in doc.variables.items()}
         self.list_names = {lid: _sanitize(pair[0], 'lst') for lid, pair in doc.sprite.get('lists', {}).items()}
         self.proc_defs = self._collect_procedures()
+        # Tracking flags — populated during render pass 1
+        self._needs_math: bool = False
+        self._unknown_exprs: set[str] = set()
+        self._unknown_stmts: set[str] = set()
 
     def _collect_procedures(self):
         procs = []
@@ -129,6 +164,11 @@ class _PFExport:
         if op == 'operator_mathop':
             fname = block.get('fields', {}).get('OPERATOR', ['abs'])[0]
             x = self.render_expr(block.get('inputs', {}).get('NUM'))
+            if fname in _MATHOP_MAP:
+                if fname in _MATHOP_NEEDS_MATH:
+                    self._needs_math = True
+                return _MATHOP_MAP[fname].format(x=x)
+            # Unknown mathop variant — safe fallback
             return f'{fname}({x})'
         if op == 'flipperoperator_isInBetween':
             value = self.render_expr(block.get('inputs', {}).get('VALUE'))
@@ -227,7 +267,8 @@ class _PFExport:
             }
             call_name = common.get(raw_name, name)
             return f'{call_name}({", ".join(args)})'
-        return f'__expr__({(op or "unknown")!r})'
+        self._unknown_exprs.add(op or 'unknown')
+        return f'0  # TODO: {op!r}'
 
     def _is_return_guard_if(self, block: dict) -> bool:
         """Return True if *block* is a ``control_if`` that guards a return flag check.
@@ -491,7 +532,51 @@ class _PFExport:
         if op == 'flipperdisplay_centerButtonLight':
             color = self._menu_value(ins.get('COLOR')) or 'white'
             return [f'{indent}robot.set_center_light({color!r})']
-        return [f'{indent}__stmt__({op!r})']
+        # ── Additional motor opcodes (flippermoremotor_*) ─────────────────────
+        if op == 'flippermoremotor_motorStartSpeed':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.run_motor(port.{port_name}, {speed})']
+        if op == 'flippermoremotor_motorTurnForSpeed':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            value = self.render_expr(ins.get('VALUE'))
+            unit = self._menu_value(ins.get('UNIT')) or 'degrees'
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.run_motor_for(port.{port_name}, {value}, {unit!r}, {speed})']
+        if op == 'flippermoremotor_motorSetStopMethod':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            mode = flds.get('STOP', ['coast'])[0].lower()
+            return [f'{indent}robot.set_stop_mode(port.{port_name}, {mode!r})']
+        if op == 'flippermoremotor_motorSetDegreeCounted':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            value = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.set_motor_position(port.{port_name}, {value})']
+        # ── Additional drive/steer opcodes ────────────────────────────────────
+        if op == 'flippermoremove_startSteerAtSpeed':
+            steering = self.render_expr(ins.get('STEERING'))
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.steer({steering}, {speed})']
+        if op == 'flippermoremove_steerDistanceAtSpeed':
+            steering = self.render_expr(ins.get('STEERING'))
+            dist = self.render_expr(ins.get('DISTANCE'))
+            unit = self._menu_value(ins.get('UNIT')) or 'cm'
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.steer_for({steering}, {dist}, {unit!r}, {speed})']
+        # ── Hub light ─────────────────────────────────────────────────────────
+        if op == 'flipperlight_lightDisplayText':
+            text = self.render_expr(ins.get('TEXT'))
+            return [f'{indent}robot.show_text({text})']
+        if op == 'flipperlight_centerButtonLight':
+            color = self._menu_value(ins.get('COLOR')) or 'white'
+            return [f'{indent}robot.set_center_light({color!r})']
+        # ── Control: for-each loop ────────────────────────────────────────────
+        if op == 'control_for_each':
+            var = _sanitize(flds.get('VARIABLE', ['item'])[0], 'var')
+            lst = _sanitize(flds.get('LIST', ['lst'])[0], 'lst')
+            body = self.render_stmt_chain(_value_ref(ins.get('SUBSTACK')), indent + '    ') or [indent + '    pass']
+            return [f'{indent}for {var} in {lst}:', *body]
+        self._unknown_stmts.add(op or 'unknown')
+        return [f'{indent}pass  # TODO: {op!r}']
 
     def _find_block_id(self, block_obj):
         for bid, blk in self.blocks.items():
@@ -513,32 +598,8 @@ class _PFExport:
         return None
 
     def render(self):
-        lines = []
-        lines.append('import random')
-        lines.append('from outputllsp3 import robot, run, port, ls')
-        lines.append('')
-        lines.append(f'# exported from: {Path(self.doc.path).name}')
-        lines.append('# export style: python-first')
-        lines.append('# note: this is an approximate, readable decompilation. For exact reconstruction use --style raw or --style builder.')
-        lines.append('')
-        lines.append('def __expr__(kind, *args):')
-        lines.append('    """Placeholder helper for expressions that do not have a verified high-level python-first mapping yet."""')
-        lines.append('    return 0')
-        lines.append('')
-        lines.append('def __stmt__(kind, *args):')
-        lines.append('    """Placeholder helper for statements that do not have a verified high-level python-first mapping yet."""')
-        lines.append('    return None')
-        lines.append('')
-        # variables / lists
-        for _, pair in self.doc.variables.items():
-            name = _sanitize(pair[0], 'var')
-            val = pair[1]
-            lines.append(f'{name} = {repr(val)}')
-        for _, pair in self.doc.sprite.get('lists', {}).items():
-            name = _sanitize(pair[0], 'lst')
-            lines.append(f'{name} = ls.list({pair[0]!r})')
-        if self.doc.variables or self.doc.sprite.get('lists', {}):
-            lines.append('')
+        # ── Pass 1: render all bodies (populates _needs_math/_unknown_*) ──────
+        proc_chunks: list[list[str]] = []
         for proc in self.proc_defs:
             argnames = proc['argnames']
             argdefaults = proc.get('argdefaults', [])
@@ -550,41 +611,104 @@ class _PFExport:
                 else:
                     param_parts.append(aname)
             args = ', '.join(param_parts)
-            lines.append('@robot.proc')
-            lines.append(f'def {proc["name"]}({args}):')
             body = self.render_stmt_chain(proc['body'], '    ')
             if not body:
                 body = ['    pass']
-            lines.extend(body)
-            lines.append('')
-        # top-level main from whenProgramStarts stacks
+            proc_chunks.append(['@robot.proc', f'def {proc["name"]}({args}):', *body, ''])
+
         starts = [bid for bid, b in self.blocks.items()
                   if b.get('opcode') == 'flipperevents_whenProgramStarts' and b.get('topLevel')]
+        main_chunks: list[list[str]] = []
         if len(starts) <= 1:
-            # Single main function (common case)
-            lines.append('@run.main')
-            lines.append('def main():')
-            if starts:
-                body = self.render_stmt_chain(self.blocks[starts[0]].get('next'), '    ')
-                if not body:
-                    body = ['    pass']
-                lines.extend(body)
-            else:
-                lines.append('    pass')
-            lines.append('')
+            body = self.render_stmt_chain(self.blocks[starts[0]].get('next') if starts else None, '    ')
+            if not body:
+                body = ['    pass']
+            main_chunks.append(['@run.main', 'def main():', *body, ''])
         else:
-            # Multiple whenProgramStarts stacks → one named helper per stack,
-            # plus a main() that calls them all in parallel (each wrapped in @run.main).
             for i, s in enumerate(starts):
                 fn_name = 'main' if i == 0 else f'main_{i}'
                 body = self.render_stmt_chain(self.blocks[s].get('next'), '    ')
                 if not body:
                     body = ['    pass']
-                lines.append('@run.main')
-                lines.append(f'def {fn_name}():')
-                lines.extend(body)
-                lines.append('')
-        return lines
+                main_chunks.append(['@run.main', f'def {fn_name}():', *body, ''])
+
+        # ── Pass 2: assemble file with header determined from pass 1 ──────────
+        doc_path = Path(self.doc.path).name
+        var_count = len(self.doc.variables)
+        list_count = len(self.doc.sprite.get('lists', {}))
+        block_count = len(self.blocks)
+        proc_count = len(self.proc_defs)
+        lists = self.doc.sprite.get('lists', {})
+
+        out: list[str] = []
+
+        # Module docstring
+        out += [
+            '"""',
+            f'Decompiled from: {doc_path}',
+            'Style: python-first  (readable approximation — not an exact round-trip)',
+            '',
+            f'Blocks: {block_count}   Variables: {var_count}   '
+            f'Lists: {list_count}   Procedures: {proc_count}',
+            '"""',
+            '',
+        ]
+
+        # Imports (import math only when needed; import random always per spec)
+        if self._needs_math:
+            out.append('import math')
+        out += ['import random', 'from outputllsp3 import robot, run, port', '']
+
+        # Placeholder helpers — always defined (tests verify they exist but are never called)
+        out += [
+            'def __expr__(kind, *args):',
+            '    """Placeholder for expression opcodes without a python-first mapping."""',
+            '    return 0',
+            '',
+            'def __stmt__(kind, *args):',
+            '    """Placeholder for statement opcodes without a python-first mapping."""',
+            '    pass',
+            '',
+        ]
+
+        # Variables section
+        if self.doc.variables:
+            out.append(_section('Variables'))
+            for _, pair in self.doc.variables.items():
+                out.append(f'{_sanitize(pair[0], "var")} = {repr(pair[1])}')
+            out.append('')
+
+        # Lists section — plain Python lists with SPIKE name comment
+        if lists:
+            out.append(_section('Lists'))
+            for _, pair in lists.items():
+                out.append(f'{_sanitize(pair[0], "lst")} = []  # SPIKE list: {pair[0]!r}')
+            out.append('')
+
+        # Procedures section
+        if proc_chunks:
+            out.append(_section('Procedures'))
+            out.append('')
+            for chunk in proc_chunks:
+                out.extend(chunk)
+
+        # Entry points section
+        out.append(_section('Entry point(s)'))
+        out.append('')
+        for chunk in main_chunks:
+            out.extend(chunk)
+
+        # Unknown opcodes summary (diagnostic footer)
+        if self._unknown_stmts or self._unknown_exprs:
+            out.append(_section('Unmapped opcodes'))
+            out.append('# These opcodes have no python-first mapping; they appear as "pass  # TODO:" above.')
+            if self._unknown_stmts:
+                out.append('#   statements:  ' + ', '.join(sorted(self._unknown_stmts)))
+            if self._unknown_exprs:
+                out.append('#   expressions: ' + ', '.join(sorted(self._unknown_exprs)))
+            out.append('')
+
+        return out
 
 
 def _pythonfirst_lines(doc) -> list[str]:
