@@ -4,6 +4,36 @@ All notable changes to `outputllsp3` are documented here.
 
 ---
 
+## 0.36.0
+
+### Human-readable export — all three styles
+
+#### `python-first` exporter (`outputllsp3/exporter/python_first.py`)
+- **Module docstring** at top of every export: filename, style, block/variable/list/procedure counts
+- **Section headers** (`# ── Variables ───────`) separating variables, lists, procedures, entry points
+- **Conditional `import math`** — added only when `operator_mathop` uses `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `ln`, `log`, `e^`, `floor`, or `ceiling`
+- **Trig degree correction** — `sin(x)` emits `math.sin(math.radians(x))` because LEGO uses degrees
+- **`abs` uses builtin** — no `import math` needed for `abs(x)`
+- **Lists as `= []`** — list variables initialized as Python lists instead of `ls.list(name)`; `ls` import removed
+- **Unknown opcodes** degrade gracefully: `pass  # TODO: 'opcode'` / `0  # TODO: 'opcode'`; diagnostic footer lists any unhandled opcodes
+- **8 new opcode handlers**: `flippermoremotor_motorStartSpeed`, `motorTurnForSpeed`, `motorSetStopMethod`, `motorSetDegreeCounted`; `flippermoremove_startSteerAtSpeed`, `steerDistanceAtSpeed`; `flipperlight_lightDisplayText`, `centerButtonLight`; `control_for_each`
+
+#### `builder` exporter (`outputllsp3/exporter/builder.py`)
+- `_OPCODE_LABELS` dict with 60+ human-readable labels (covers all SPIKE block categories)
+- Every `_set_block()` call now has an inline `# Human Label` comment
+- Variable/list declarations annotated with `# name: <var_name>`
+- Section headers grouping top-level blocks, procedures, and remaining blocks
+
+#### `raw` exporter (`outputllsp3/exporter/raw.py`)
+- Inline opcode comments on every block assignment line (reuses `_opcode_label` from builder)
+- Variable/list declarations annotated with `# name: <var_name>`
+
+#### Tests
+- 25 new tests in `tests/test_export_readable.py` covering all improvements above
+- Total test count: **293 passing**
+
+---
+
 ## 0.33.0 — 2026-03-17
 
 ### Enhanced llsp3-to-Python export flow (`python-first` style)
