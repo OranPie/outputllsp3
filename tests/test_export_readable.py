@@ -87,7 +87,7 @@ def test_pf_module_docstring():
     exported = _compile_export(_MINIMAL)
     ast.parse(exported)
     assert exported.lstrip().startswith('"""'), "Module docstring missing"
-    assert "Decompiled from:" in exported
+    assert "Source:" in exported
     assert "python-first" in exported
 
 
@@ -158,7 +158,6 @@ def main():
     assert "ls.list(" not in exported
     # Should use [] literal
     assert "= []" in exported
-    assert "# SPIKE list:" in exported
 
 
 def test_pf_no_ls_in_output_with_lists():

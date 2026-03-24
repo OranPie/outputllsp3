@@ -149,14 +149,14 @@ class _PFExport:
         if op == 'operator_join':
             a = self.render_expr(block.get('inputs', {}).get('STRING1'))
             b = self.render_expr(block.get('inputs', {}).get('STRING2'))
-            return f'(str({a}) + str({b}))'
+            return f'str({a}) + str({b})'
         if op == 'operator_length':
             s = self.render_expr(block.get('inputs', {}).get('STRING'))
             return f'len({s})'
         if op == 'operator_letter_of':
             letter = self.render_expr(block.get('inputs', {}).get('LETTER'))
             s = self.render_expr(block.get('inputs', {}).get('STRING'))
-            return f'{s}[({letter})-1]'
+            return f'{s}[{letter} - 1]'
         if op == 'operator_contains':
             s1 = self.render_expr(block.get('inputs', {}).get('STRING1'))
             s2 = self.render_expr(block.get('inputs', {}).get('STRING2'))
@@ -181,7 +181,7 @@ class _PFExport:
         if op == 'data_itemoflist':
             idx = self.render_expr(block.get('inputs', {}).get('INDEX'))
             lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'{_sanitize(lst,"lst")}[({idx})-1]'
+            return f'{_sanitize(lst,"lst")}[{idx} - 1]'
         if op == 'data_listcontainsitem':
             item = self.render_expr(block.get('inputs', {}).get('ITEM'))
             lst = block.get('fields', {}).get('LIST', ['lst'])[0]
@@ -189,7 +189,7 @@ class _PFExport:
         if op == 'data_itemnumoflist':
             item = self.render_expr(block.get('inputs', {}).get('ITEM'))
             lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'({_sanitize(lst, "lst")}.index({item}) + 1)'
+            return f'{_sanitize(lst, "lst")}.index({item}) + 1'
         if op == 'flippersensors_orientationAxis':
             axis = block.get('fields', {}).get('AXIS', ['yaw'])[0]
             return f'robot.angle({axis!r})'
@@ -337,7 +337,7 @@ class _PFExport:
                     return repr(val)
 
         self._unknown_exprs.add(op or 'unknown')
-        return f'0  # TODO: {op!r}'
+        return f'0  # TODO: {op}'
 
     def _is_return_guard_if(self, block: dict) -> bool:
         """Return True if *block* is a ``control_if`` that guards a return flag check.
@@ -471,11 +471,11 @@ class _PFExport:
             name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
             idx = self.render_expr(ins.get('INDEX'))
             item = self.render_expr(ins.get('ITEM'))
-            return [f'{indent}{name}[({idx})-1] = {item}']
+            return [f'{indent}{name}[{idx} - 1] = {item}']
         if op == 'data_deleteoflist':
             name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
             idx = self.render_expr(ins.get('INDEX'))
-            return [f'{indent}del {name}[({idx})-1]']
+            return [f'{indent}del {name}[{idx} - 1]']
         if op == 'control_wait':
             dur = self.render_expr(ins.get('DURATION'))
             return [f'{indent}run.sleep({dur})']
@@ -503,7 +503,7 @@ class _PFExport:
             return [f'{indent}while not ({cond}):', *body]
         if op == 'control_wait_until':
             cond = self.render_expr(ins.get('CONDITION'))
-            return [f'{indent}while not ({cond}):', f'{indent}    run.sleep(0.01)']
+            return [f'{indent}while not ({cond}):', f'{indent}    run.sleep(0.05)  # poll']
         if op in {'control_stop', 'flippercontrol_stop'}:
             option = flds.get('STOP_OPTION', ['this script'])[0] if flds.get('STOP_OPTION') else 'this script'
             if option == 'this script':
@@ -611,7 +611,7 @@ class _PFExport:
             value = self.render_expr(ins.get('VALUE'))
             unit = self._menu_value(ins.get('UNIT')) or 'degrees'
             speed = self.render_expr(ins.get('SPEED'))
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {value}, {unit!r}, {speed})']
+            return [f"{indent}robot.run_motor_for(port.{port_name}, {value}, '{unit}', speed={speed})"]
         if op == 'flippermoremotor_motorSetStopMethod':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             mode = flds.get('STOP', ['coast'])[0].lower()
@@ -831,7 +831,7 @@ class _PFExport:
         if op == 'horizontalmotor_motorTurnClockwiseRotations':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             rotations = self.render_expr(ins.get('ROTATIONS'))
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {rotations!r}, \'rotations\', 100)']
+            return [f"{indent}robot.run_motor_for(port.{port_name}, 'clockwise', {rotations}, 'rotations')"]
         if op == 'horizontalmotor_motorTurnCounterClockwiseRotations':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             rotations = self.render_expr(ins.get('ROTATIONS'))
@@ -874,7 +874,7 @@ class _PFExport:
             return [f'{indent}robot.hub_show_image({image})']
 
         self._unknown_stmts.add(op or 'unknown')
-        return [f'{indent}pass  # TODO: {op!r}']
+        return [f'{indent}pass  # TODO: {op}']
 
     def _find_block_id(self, block_obj):
         for bid, blk in self.blocks.items():
@@ -1053,16 +1053,25 @@ class _PFExport:
         proc_count = len(self.proc_defs)
         lists = self.doc.sprite.get('lists', {})
 
+        import outputllsp3 as _pkg
+        lib_version = getattr(_pkg, '__version__', '?')
+
         out: list[str] = []
 
         # Module docstring
+        stats = (
+            f'Blocks: {block_count}'
+            + (f'  |  Variables: {var_count}' if var_count else '')
+            + (f'  |  Lists: {list_count}' if list_count else '')
+            + (f'  |  Procedures: {proc_count}' if proc_count else '')
+        )
         out += [
             '"""',
-            f'Decompiled from: {doc_path}',
-            'Style: python-first  (readable approximation — not an exact round-trip)',
+            f'Source:    {doc_path}',
+            f'Exported by outputllsp3 {lib_version}  (python-first style)',
+            f'Note:      readable approximation — not an exact round-trip',
             '',
-            f'Blocks: {block_count}   Variables: {var_count}   '
-            f'Lists: {list_count}   Procedures: {proc_count}',
+            stats,
             '"""',
             '',
         ]
@@ -1088,14 +1097,23 @@ class _PFExport:
         if self.doc.variables:
             out.append(_section('Variables'))
             for _, pair in self.doc.variables.items():
-                out.append(f'{_sanitize(pair[0], "var")} = {repr(pair[1])}')
+                name = _sanitize(pair[0], 'var')
+                val = pair[1]
+                # Use single-quote strings for nicer output
+                if isinstance(val, str):
+                    lit = f"'{val}'" if "'" not in val else repr(val)
+                else:
+                    lit = repr(val)
+                out.append(f'{name} = {lit}')
             out.append('')
 
-        # Lists section — plain Python lists with SPIKE name comment
+        # Lists section — plain Python lists, comment shows original SPIKE name if different
         if lists:
             out.append(_section('Lists'))
             for _, pair in lists.items():
-                out.append(f'{_sanitize(pair[0], "lst")} = []  # SPIKE list: {pair[0]!r}')
+                py_name = _sanitize(pair[0], 'lst')
+                comment = f'  # {pair[0]}' if py_name != pair[0] else ''
+                out.append(f'{py_name} = []{comment}')
             out.append('')
 
         # Procedures section
