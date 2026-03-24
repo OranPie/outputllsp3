@@ -54,6 +54,9 @@ PACKAGE_LAYOUT = {
         "exporter/builder.py",    # Builder export strategy (human-editable exact export)
         "exporter/python_first.py", # Python-first export strategy (_PFExport decompiler)
     ],
+    "stdlib": [
+        "stdlib.py",   # Reusable SPIKE procedure templates (Clamp, MapRange, Sign, WaitOrTimeout, Countdown, FlashText)
+    ],
     "workflow": [
         "workflow.py",    # CLI utilities (discover_defaults, doctor_report, init_workspace, roundtrip_llsp3)
         "cli.py",         # CLI entry-point (outputllsp3 command with all sub-commands)

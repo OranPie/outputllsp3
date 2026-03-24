@@ -618,6 +618,8 @@ class API:
         self.db = self.drivebase
         self.robot = RobotAPI(self.project, self)
         self.r = self.robot
+        from .stdlib import StdLib
+        self.stdlib = StdLib(self)
 
     def raw(self, opcode: str, **kwargs: Any) -> str:
         return self.project.add_block(opcode, **kwargs)

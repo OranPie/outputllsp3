@@ -34,7 +34,7 @@ def test_package_info():
 def test_package_layout_complete():
     """PACKAGE_LAYOUT must mention all subsystems."""
     from outputllsp3.metadata import PACKAGE_LAYOUT
-    required_groups = {'infrastructure', 'core', 'authoring', 'transpile', 'export', 'workflow', 'resources'}
+    required_groups = {'infrastructure', 'core', 'authoring', 'transpile', 'export', 'stdlib', 'workflow', 'resources'}
     assert required_groups == set(PACKAGE_LAYOUT.keys()), (
         f"PACKAGE_LAYOUT groups mismatch: {set(PACKAGE_LAYOUT.keys())} != {required_groups}"
     )

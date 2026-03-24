@@ -93,6 +93,11 @@ from .pythonfirst import robot, run, port, ls, transpile_pythonfirst_file, reset
 from .exporter import export_llsp3_to_python
 
 # ---------------------------------------------------------------------------
+# Standard library
+# ---------------------------------------------------------------------------
+from .stdlib import install_math, install_timing, install_display, install_all, StdLib
+
+# ---------------------------------------------------------------------------
 # Workflow utilities
 # ---------------------------------------------------------------------------
 from .workflow import (
@@ -162,6 +167,12 @@ __all__ = [
     "reset_pythonfirst_registry",
     # Exporter
     "export_llsp3_to_python",
+    # Standard library
+    "install_math",
+    "install_timing",
+    "install_display",
+    "install_all",
+    "StdLib",
     # Workflow
     "bundled_paths",
     "discover_defaults",
