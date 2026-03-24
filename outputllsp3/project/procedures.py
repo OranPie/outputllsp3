@@ -82,6 +82,14 @@ class ProcedureManager:
         argids = meta["argids"]
         stored_defaults = meta.get("defaults", [""] * len(argids))
         ins = OrderedDict()
+        expected = len(argids)
+        actual = len(args)
+        if actual != expected:
+            import warnings
+            warnings.warn(
+                f"Procedure '{name}' expects {expected} argument(s), got {actual}.",
+                stacklevel=2,
+            )
         for i, aid in enumerate(argids):
             if i < len(args):
                 ins[aid] = self._p._blocks._text_input(args[i])

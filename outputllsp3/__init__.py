@@ -4,7 +4,7 @@ Package layout
 --------------
 infrastructure  version, metadata, enums
 core            parser, project (package), catalog, schema
-authoring       api, flow, wrapper, spikepython
+authoring       api, builder (SpikeBuilder), flow, wrapper, spikepython
 transpile       transpiler, ast_transpiler, pythonfirst (package)
 export          exporter (package)
 workflow        workflow, cli
@@ -42,8 +42,13 @@ from .enums import (
     Button,
     MotorPairId,
     OrientationAxis,
+    Axis,
     LightImage,
+    Color,
     ColorValue,
+    StopMode,
+    Direction,
+    Comparator,
 )
 from .locale import set_locale, get_locale, t, available_locales
 
@@ -59,6 +64,7 @@ from .schema import SchemaRegistry, bundled_schema
 # Authoring facades
 # ---------------------------------------------------------------------------
 from .api import API, RobotAPI, LightAPI, SoundAPI
+from .builder import SpikeBuilder
 from .flow import FlowBuilder
 from .wrapper import ScratchWrapper
 from .spikepython import SpikePythonAPI
@@ -72,6 +78,7 @@ SPIKEAPI = SpikePythonAPI
 # ---------------------------------------------------------------------------
 from .transpiler import (
     autodiscover,
+    transpile,
     transpile_file,
     transpile_module,
     transpile_package,
@@ -110,8 +117,13 @@ __all__ = [
     "Button",
     "MotorPairId",
     "OrientationAxis",
+    "Axis",
     "LightImage",
+    "Color",
     "ColorValue",
+    "StopMode",
+    "Direction",
+    "Comparator",
     "set_locale",
     "get_locale",
     "t",
@@ -125,6 +137,7 @@ __all__ = [
     "bundled_schema",
     # Authoring
     "API",
+    "SpikeBuilder",
     "RobotAPI",
     "LightAPI",
     "SoundAPI",
@@ -135,6 +148,7 @@ __all__ = [
     "SPIKEAPI",     # legacy alias
     # Transpilers
     "autodiscover",
+    "transpile",
     "transpile_file",
     "transpile_module",
     "transpile_package",

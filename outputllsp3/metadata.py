@@ -34,6 +34,7 @@ PACKAGE_LAYOUT = {
     ],
     "authoring": [
         "api.py",         # API, RobotAPI – high-level facade dataclasses (VarsAPI, OpsAPI, …)
+        "builder.py",     # SpikeBuilder – fluent typed sub-namespace facade over API
         "flow.py",        # FlowBuilder – block-sequencing helpers (chain, seq, procedure, …)
         "wrapper.py",     # ScratchWrapper – module-discovery facade over LLSP3Project
         "spikepython.py", # SpikePythonAPI – SPIKE Python library facade (hub, motors, sensors)

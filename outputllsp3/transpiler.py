@@ -134,3 +134,103 @@ def transpile_path(path: str | Path, *, template: str | Path | None = None, stri
     if path.is_dir():
         return transpile_package(path, template=template, strings=strings, out=out, sprite_name=sprite_name, function_namespace=function_namespace, strict_verified=strict_verified)
     return transpile_file(path, template=template, strings=strings, out=out, sprite_name=sprite_name or path.stem, function_namespace=function_namespace, strict_verified=strict_verified)
+
+
+def transpile(
+    source: str | Path,
+    *,
+    mode: str = "auto",
+    out: str | Path,
+    template: str | Path | None = None,
+    strings: str | Path | None = None,
+    sprite_name: str | None = None,
+    function_namespace: bool = False,
+    strict_verified: bool = False,
+) -> Path:
+    """Unified transpilation entry point — replaces the six individual functions.
+
+    Parameters
+    ----------
+    source:
+        Path to a ``.py`` file, a Python package directory, or a
+        python-first style ``.py`` file.
+    mode:
+        ``'auto'`` (default) – detect the transpilation style from file content.
+        ``'python_first'``   – python-first decorator style (``@robot.proc`` / ``@run.main``).
+        ``'build_script'``   – classic build-script style (module defines ``build()``).
+        ``'ast'``            – raw Python-to-Scratch AST transpilation.
+    out:
+        Output path for the generated ``.llsp3`` file.
+    template, strings:
+        Optional paths; discovered automatically when omitted.
+    sprite_name:
+        Sprite name in the generated project (defaults to stem of source path).
+    function_namespace, strict_verified:
+        Forwarded to the underlying transpiler.
+
+    Returns
+    -------
+    Path
+        The path of the written ``.llsp3`` file.
+    """
+    source = Path(source)
+    logger.debug(t("transpile.start", path=source))
+
+    resolved_mode = mode
+    if resolved_mode == "auto":
+        resolved_mode = _detect_transpile_mode(source)
+        logger.debug("transpile: auto-detected mode=%s for %s", resolved_mode, source)
+
+    if resolved_mode == "python_first":
+        return transpile_pythonfirst_file(
+            source,
+            template=template,
+            strings=strings,
+            out=out,
+            sprite_name=sprite_name,
+            strict_verified=strict_verified,
+        )
+
+    if resolved_mode == "ast":
+        from .ast_transpiler import transpile_python_source
+        return transpile_python_source(
+            source,
+            template=template,
+            strings=strings,
+            out=out,
+            sprite_name=sprite_name,
+            function_namespace=function_namespace,
+        )
+
+    # build_script (default)
+    return transpile_path(
+        source,
+        template=template,
+        strings=strings,
+        out=out,
+        sprite_name=sprite_name,
+        function_namespace=function_namespace,
+        strict_verified=strict_verified,
+    )
+
+
+def _detect_transpile_mode(source: Path) -> str:
+    """Heuristically detect the transpilation mode from file/directory contents.
+
+    Rules (checked in priority order):
+    1. Directory → always ``'build_script'`` (package with build()).
+    2. File contains ``@robot.proc`` or ``@run.main`` → ``'python_first'``.
+    3. File contains ``def build(`` → ``'build_script'``.
+    4. Fallback → ``'ast'``.
+    """
+    if source.is_dir():
+        return "build_script"
+    try:
+        text = source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "build_script"
+    if "@robot.proc" in text or "@run.main" in text:
+        return "python_first"
+    if "def build(" in text:
+        return "build_script"
+    return "ast"

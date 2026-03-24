@@ -57,7 +57,21 @@ class VariableManager:
             fields={"VARIABLE": [qname, self.variable_id(name, namespace=namespace, raw=raw)]},
         )
 
+    def _var_exists(self, name: str, *, namespace: str | None = None, raw: bool = False) -> bool:
+        try:
+            self.variable_id(name, namespace=namespace, raw=raw)
+            return True
+        except Exception:
+            return False
+
     def set_variable(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        if not self._var_exists(name, namespace=namespace, raw=raw):
+            import warnings
+            warnings.warn(
+                f"Variable '{name}' has not been declared; call add_variable() first.",
+                stacklevel=2,
+            )
+            self.add_variable(name, 0, namespace=namespace, raw=raw)
         qname = self.qualify_var_name(name, namespace=namespace, raw=raw)
         return self._p.add_block(
             "data_setvariableto",
@@ -66,6 +80,13 @@ class VariableManager:
         )
 
     def change_variable(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        if not self._var_exists(name, namespace=namespace, raw=raw):
+            import warnings
+            warnings.warn(
+                f"Variable '{name}' has not been declared; call add_variable() first.",
+                stacklevel=2,
+            )
+            self.add_variable(name, 0, namespace=namespace, raw=raw)
         qname = self.qualify_var_name(name, namespace=namespace, raw=raw)
         return self._p.add_block(
             "data_changevariableby",

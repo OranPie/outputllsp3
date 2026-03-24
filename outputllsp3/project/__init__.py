@@ -37,6 +37,7 @@ from .blocks import BlockManager
 from .variables import VariableManager
 from .procedures import ProcedureManager
 from .serializer import ProjectSerializer
+from .layout import LayoutManager
 
 __all__ = [
     "LLSP3Project",
@@ -44,6 +45,7 @@ __all__ = [
     "VariableManager",
     "ProcedureManager",
     "ProjectSerializer",
+    "LayoutManager",
 ]
 
 

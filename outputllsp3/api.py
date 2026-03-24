@@ -28,6 +28,7 @@ Aggregate
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from contextlib import contextmanager
 import inspect
@@ -67,7 +68,12 @@ class VarsAPI:
 
 @dataclass
 class ListsAPI:
-    """List facade. Lists are declared resources like variables, but list operations return blocks."""
+    """List facade. Lists are declared resources like variables, but list operations return blocks.
+
+    Canonical methods: ``add``, ``ensure``, ``append``, ``clear``, ``length``,
+    ``get_item``, ``set_item``, ``delete_item``, ``insert_item``, ``contains``.
+    Old names (``item``, ``setitem``, ``delete``, ``insert``) are deprecated.
+    """
     project: Any
 
     def add(self, name: str, value: list[Any] | None = None, *, namespace: str | None = None, raw: bool = False) -> str:
@@ -88,20 +94,36 @@ class ListsAPI:
     def length(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_length(name, namespace=namespace, raw=raw)
 
-    def item(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+    def get_item(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_item(name, index, namespace=namespace, raw=raw)
+
+    def item(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        warnings.warn("item() is deprecated; use get_item()", DeprecationWarning, stacklevel=2)
+        return self.get_item(name, index, namespace=namespace, raw=raw)
 
     def contains(self, name: str, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_contains(name, item, namespace=namespace, raw=raw)
 
-    def setitem(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+    def set_item(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_replace(name, index, item, namespace=namespace, raw=raw)
 
-    def delete(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+    def setitem(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        warnings.warn("setitem() is deprecated; use set_item()", DeprecationWarning, stacklevel=2)
+        return self.set_item(name, index, item, namespace=namespace, raw=raw)
+
+    def delete_item(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_delete(name, index, namespace=namespace, raw=raw)
 
-    def insert(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+    def delete(self, name: str, index: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        warnings.warn("delete() is deprecated; use delete_item()", DeprecationWarning, stacklevel=2)
+        return self.delete_item(name, index, namespace=namespace, raw=raw)
+
+    def insert_item(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
         return self.project.list_insert(name, index, item, namespace=namespace, raw=raw)
+
+    def insert(self, name: str, index: Any, item: Any, *, namespace: str | None = None, raw: bool = False) -> str:
+        warnings.warn("insert() is deprecated; use insert_item()", DeprecationWarning, stacklevel=2)
+        return self.insert_item(name, index, item, namespace=namespace, raw=raw)
 
 
 @dataclass
@@ -143,14 +165,32 @@ class MoveAPI:
         return self._wrapper
 
     def set_pair(self, pair: str = "AB") -> str: return self.project.set_movement_pair(str(pair))
-    def set_motor_pair(self, pair: str = "AB") -> str: return self.set_pair(pair)
-    def pair(self, pair: str = "AB") -> str: return self.set_pair(pair)
+
+    def set_motor_pair(self, pair: str = "AB") -> str:
+        warnings.warn("set_motor_pair() is deprecated; use set_pair()", DeprecationWarning, stacklevel=2)
+        return self.set_pair(pair)
+
+    def pair(self, pair: str = "AB") -> str:
+        warnings.warn("pair() is deprecated; use set_pair()", DeprecationWarning, stacklevel=2)
+        return self.set_pair(pair)
+
     def dual_speed(self, left: Any, right: Any) -> str: return self.project.start_dual_speed(left, right)
-    def start_dual_speed(self, left: Any, right: Any) -> str: return self.dual_speed(left, right)
+
+    def start_dual_speed(self, left: Any, right: Any) -> str:
+        warnings.warn("start_dual_speed() is deprecated; use dual_speed()", DeprecationWarning, stacklevel=2)
+        return self.dual_speed(left, right)
+
     def dual_power(self, left: Any, right: Any) -> str: return self.project.start_dual_power(left, right)
-    def start_dual_power(self, left: Any, right: Any) -> str: return self.dual_power(left, right)
+
+    def start_dual_power(self, left: Any, right: Any) -> str:
+        warnings.warn("start_dual_power() is deprecated; use dual_power()", DeprecationWarning, stacklevel=2)
+        return self.dual_power(left, right)
+
     def stop(self) -> str: return self.project.stop_moving()
-    def stop_move(self) -> str: return self.stop()
+
+    def stop_move(self) -> str:
+        warnings.warn("stop_move() is deprecated; use stop()", DeprecationWarning, stacklevel=2)
+        return self.stop()
     def steer(self, steering: Any, speed: Any) -> str: return self._w().flippermoremove.start_steer_at_speed(STEERING=steering, SPEED=speed)
     def steer_for_distance(self, steering: Any, distance: Any, speed: Any, unit: str = "degrees") -> str: return self._w().flippermoremove.steer_distance_at_speed(STEERING=steering, DISTANCE=distance, UNIT=unit, SPEED=speed)
 
@@ -223,8 +263,15 @@ class WaitAPI:
     project: Any
     def seconds(self, value: float) -> str: return self.project.wait(value)
     def ms(self, value: int) -> str: return self.project.wait(value / 1000.0)
-    def sleep(self, value: float) -> str: return self.seconds(value)
-    def sleep_ms(self, value: int) -> str: return self.ms(value)
+
+    def sleep(self, value: float) -> str:
+        warnings.warn("sleep() is deprecated; use seconds()", DeprecationWarning, stacklevel=2)
+        return self.seconds(value)
+
+    def sleep_ms(self, value: int) -> str:
+        warnings.warn("sleep_ms() is deprecated; use ms()", DeprecationWarning, stacklevel=2)
+        return self.ms(value)
+
     def __call__(self, value: float) -> str: return self.seconds(value)
 
 
@@ -542,6 +589,7 @@ class API:
 
     def __post_init__(self):
         from .flow import FlowBuilder
+        from .project.layout import LayoutManager
         self.vars = VarsAPI(self.project)
         self.lists = ListsAPI(self.project)
         self.ops = OpsAPI(self.project)
@@ -551,7 +599,7 @@ class API:
         self.wait = WaitAPI(self.project)
         self.light = LightAPI(self.project)
         self.sound = SoundAPI(self.project)
-        self.flow = FlowBuilder(self.project)
+        self.flow = FlowBuilder(self.project, LayoutManager())
         self.drivebase = DrivebaseAPI(self.project, self)
         self.wrapper = ScratchWrapper(self.project)
         self.scratch = self.wrapper
