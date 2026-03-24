@@ -622,6 +622,21 @@ class API:
     def raw(self, opcode: str, **kwargs: Any) -> str:
         return self.project.add_block(opcode, **kwargs)
 
+    def relayout(self) -> None:
+        """Re-compute all top-level block positions based on actual stack depths.
+
+        Call this after all blocks have been built to eliminate overlap and
+        ensure procedures are arranged in a tidy grid.  Delegates to
+        ``LayoutManager.relayout(project.blocks)``.
+        """
+        if self.flow.layout is not None:
+            self.flow.layout.relayout(self.project.blocks)
+
+    @property
+    def layout(self):
+        """The ``LayoutManager`` used by this API instance."""
+        return self.flow.layout
+
     def seq(self, *items: Any) -> list[str]:
         return self.flow.seq(*items)
 

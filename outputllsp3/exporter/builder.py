@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import _pyrepr, _summary, _block_hint, _val_repr, _BLOCK_KEY_ORDER
+from .base import (_pyrepr, _summary, _block_hint, _val_repr, _BLOCK_KEY_ORDER,
+                   _build_stack_groups, _linear_chain_labels)
 
 # ── Opcode → human-readable label ────────────────────────────────────────────
 _OPCODE_LABELS: dict[str, str] = {
@@ -292,54 +293,73 @@ def builder_lines(doc) -> list[str]:
     lines.append('    project.sprite["blocks"] = OrderedDict()')
     lines.append('')
 
-    top_ids = {bid for bid, block in blocks.items() if block.get('topLevel')}
-    proc_proto_ids = {bid for bid, block in blocks.items()
-                      if block.get('opcode') == 'procedures_prototype'}
-    proc_def_ids = {bid for bid, block in blocks.items()
-                    if block.get('opcode') == 'procedures_definition'}
+    # ── Build stack groups: one section per top-level root ────────────────────
+    stack_groups = _build_stack_groups(blocks)
+    total_stacks = len(stack_groups)
 
-    def emit_group(title: str, pred):
-        emitted = False
-        for bid, block in blocks.items():
-            if not pred(bid, block):
+    def _emit_block(bid: str, block: dict) -> None:
+        opcode = block.get('opcode', '?')
+        label = _opcode_label(opcode)
+        comment = _block_hint(opcode, block, label)
+        lines.append(f'    _set_block(project, {bid!r}, {{  # {comment}')
+        ordered = [k for k in _BLOCK_KEY_ORDER if k in block] + \
+                  [k for k in block if k not in _BLOCK_KEY_ORDER]
+        for key in ordered:
+            val = block[key]
+            if key == 'shadow' and val is False:
                 continue
-            if not emitted:
-                lines.append(f'    # ── {title} ' + '─' * max(2, 70 - len(title)))
-                emitted = True
-            opcode = block.get('opcode', '?')
-            label = _opcode_label(opcode)
-            comment = _block_hint(opcode, block, label)
-            # First line: _set_block + opening brace + # comment (test requires # on same line)
-            lines.append(f'    _set_block(project, {bid!r}, {{  # {comment}')
-            # Block fields — human-readable dict body
-            ordered = [k for k in _BLOCK_KEY_ORDER if k in block] + \
-                      [k for k in block if k not in _BLOCK_KEY_ORDER]
-            for key in ordered:
-                val = block[key]
-                if key == 'shadow' and val is False:
-                    continue
-                if key == 'topLevel' and val is False:
-                    continue
-                if key == 'comment' and val is None:
-                    continue
-                if key == 'mutation' and not val:
-                    continue
-                lines.append(f"        '{key}': {_val_repr(val)},")
-            lines.append('    })')
-        if emitted:
-            lines.append('')
+            if key == 'topLevel' and val is False:
+                continue
+            if key == 'comment' and val is None:
+                continue
+            if key == 'mutation' and not val:
+                continue
+            lines.append(f"        '{key}': {_val_repr(val)},")
+        lines.append('    })')
 
-    emit_group('top-level blocks', lambda bid, block: bid in top_ids)
-    emit_group(
-        'procedure definitions',
-        lambda bid, block: bid in proc_def_ids or bid in proc_proto_ids,
-    )
-    emit_group(
-        'body blocks',
-        lambda bid, block: (bid not in top_ids
-                            and bid not in proc_def_ids
-                            and bid not in proc_proto_ids),
-    )
+    for stack_idx, (root_bid, group_bids) in enumerate(stack_groups, 1):
+        if root_bid is None:
+            # Orphaned blocks with no top-level parent
+            lines.append(f'    # ── Orphaned blocks ' + '─' * 54)
+            for bid in group_bids:
+                _emit_block(bid, blocks[bid])
+            lines.append('')
+            continue
+
+        root_block = blocks[root_bid]
+        root_op = root_block.get('opcode', '?')
+        root_label = _opcode_label(root_op)
+
+        # ── Section header ────────────────────────────────────────────────────
+        is_proc = root_op == 'procedures_definition'
+        if is_proc:
+            # Find the procedure prototype to get the name
+            proto_id = (root_block.get('inputs', {}).get('custom_block', [None, None]) or [None, None])[1]
+            proccode = ''
+            if proto_id and proto_id in blocks:
+                proccode = blocks[proto_id].get('mutation', {}).get('proccode', '')
+            section = f'procedure: {proccode}' if proccode else 'procedure definition'
+        else:
+            section = f'stack {stack_idx}/{total_stacks}: {root_label}'
+
+        bar_len = max(2, 72 - len(section))
+        lines.append(f'    # ══ {section} {"═" * bar_len}')
+
+        # ── Chain summary: root → … along next-links ─────────────────────────
+        chain_labels, chain_depth = _linear_chain_labels(root_bid, blocks, _opcode_label, max_steps=5)
+        chain_str = ' → '.join(chain_labels)
+        if chain_depth > len(chain_labels):
+            chain_str += f' → … ({chain_depth} blocks total)'
+        else:
+            noun = 'block' if chain_depth == 1 else 'blocks'
+            chain_str += f'  ({chain_depth} {noun})'
+        lines.append(f'    #   {chain_str}')
+        lines.append('')
+
+        # ── Emit every block in this stack ────────────────────────────────────
+        for bid in group_bids:
+            _emit_block(bid, blocks[bid])
+        lines.append('')
 
     # ── Comments ───────────────────────────────────────────────────────────────
     lines.append('    project.sprite["comments"] = OrderedDict()')

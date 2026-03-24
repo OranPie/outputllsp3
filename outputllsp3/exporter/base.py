@@ -101,6 +101,70 @@ def _block_hint(opcode: str, block: dict, label: str) -> str:
     return label
 
 
+def _collect_stack_bids(root_bid: str, blocks: dict) -> list[str]:
+    """BFS from *root_bid* collecting every block ID that belongs to this stack.
+
+    Follows both ``next`` links (linear body) and input sub-stacks
+    (``SUBSTACK``, ``SUBSTACK2``, loop bodies, etc.) so the entire tree is
+    captured.  Returns IDs in encounter order (root first).
+    """
+    result: list[str] = []
+    queue = [root_bid]
+    seen: set[str] = set()
+    while queue:
+        cur = queue.pop(0)
+        if cur not in blocks or cur in seen:
+            continue
+        seen.add(cur)
+        result.append(cur)
+        nxt = blocks[cur].get('next')
+        if nxt:
+            queue.append(nxt)
+        for inp_val in blocks[cur].get('inputs', {}).values():
+            if isinstance(inp_val, list):
+                for item in inp_val:
+                    if isinstance(item, str) and item in blocks and item not in seen:
+                        queue.append(item)
+    return result
+
+
+def _linear_chain_labels(root_bid: str, blocks: dict, label_fn, max_steps: int = 6) -> tuple[list[str], int]:
+    """Follow ``next`` links from *root_bid*, collecting opcode labels.
+
+    Returns ``(label_list, total_depth)`` where *label_list* contains at most
+    *max_steps* labels and *total_depth* is the true chain length.
+    """
+    parts: list[str] = []
+    cur: str | None = root_bid
+    seen: set[str] = set()
+    while cur and cur not in seen and cur in blocks:
+        seen.add(cur)
+        if len(parts) < max_steps:
+            parts.append(label_fn(blocks[cur].get('opcode', '?')))
+        cur = blocks[cur].get('next')
+    return parts, len(seen)
+
+
+def _build_stack_groups(blocks: dict) -> list[tuple[str | None, list[str]]]:
+    """Group block IDs by their top-level root block.
+
+    Returns a list of ``(root_bid, [bid, ...])`` pairs — one per top-level
+    block.  An extra ``(None, [orphan_ids])`` entry is appended for any block
+    that is not reachable from any top-level root.
+    """
+    top_ids = [bid for bid, b in blocks.items() if b.get('topLevel')]
+    owned: set[str] = set()
+    groups: list[tuple[str | None, list[str]]] = []
+    for root in top_ids:
+        group = _collect_stack_bids(root, blocks)
+        owned.update(group)
+        groups.append((root, group))
+    orphans = [bid for bid in blocks if bid not in owned]
+    if orphans:
+        groups.append((None, orphans))
+    return groups
+
+
 def _summary(doc) -> dict[str, Any]:
     blocks = doc.blocks
     opcode_counts = Counter(b.get("opcode") for b in blocks.values())
