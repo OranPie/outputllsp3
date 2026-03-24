@@ -267,6 +267,27 @@ class _PFExport:
             }
             call_name = common.get(raw_name, name)
             return f'{call_name}({", ".join(args)})'
+        # argument_reporter_boolean — same pattern as string_number
+        if op == 'argument_reporter_boolean':
+            fld = block.get('fields', {}).get('VALUE', ['arg'])
+            return _sanitize(fld[0], 'arg')
+
+        # flippermoremotor_power expression
+        if op == 'flippermoremotor_power':
+            port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
+            return f'robot.motor_power(port.{port_name})'
+
+        # sound_volume expression
+        if op == 'sound_volume':
+            return 'robot.volume()'
+
+        # flippersensors_isReflectivity — bool expression with comparator
+        if op == 'flippersensors_isReflectivity':
+            port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
+            comp = block.get('fields', {}).get('COMPARATOR', ['equal'])[0]
+            value = self.render_expr(block.get('inputs', {}).get('VALUE'))
+            return f'robot.is_reflected_light(port.{port_name}, {comp!r}, {value})'
+
         self._unknown_exprs.add(op or 'unknown')
         return f'0  # TODO: {op!r}'
 
@@ -575,6 +596,100 @@ class _PFExport:
             lst = _sanitize(flds.get('LIST', ['lst'])[0], 'lst')
             body = self.render_stmt_chain(_value_ref(ins.get('SUBSTACK')), indent + '    ') or [indent + '    pass']
             return [f'{indent}for {var} in {lst}:', *body]
+        # ── Movement (flippermove_*) ──────────────────────────────────────────────
+        if op == 'flippermove_move':
+            direction = self._menu_value(ins.get('DIRECTION')) or 'forward'
+            value = self.render_expr(ins.get('VALUE'))
+            unit = flds.get('UNIT', ['cm'])[0]
+            return [f'{indent}robot.move({direction!r}, {value}, {unit!r})']
+        if op == 'flippermove_steer':
+            steering = self.render_expr(ins.get('STEERING'))
+            value = self.render_expr(ins.get('VALUE'))
+            unit = flds.get('UNIT', ['cm'])[0]
+            return [f'{indent}robot.steer({steering}, {value}, {unit!r})']
+        if op == 'flippermove_startMove':
+            direction = self._menu_value(ins.get('DIRECTION')) or 'forward'
+            return [f'{indent}robot.start_move({direction!r})']
+        if op == 'flippermove_startSteer':
+            steering = self.render_expr(ins.get('STEERING'))
+            return [f'{indent}robot.start_steer({steering})']
+        if op == 'flippermove_movementSpeed':
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.set_move_speed({speed})']
+        if op == 'flippermove_setDistance':
+            dist = self.render_expr(ins.get('DISTANCE'))
+            unit = flds.get('UNIT', ['cm'])[0]
+            return [f'{indent}robot.set_move_scale({dist}, {unit!r})']
+
+        # ── Movement advanced (flippermoremove_*) ─────────────────────────────────
+        if op == 'flippermoremove_movementSetAcceleration':
+            accel = self.render_expr(ins.get('ACCELERATION'))
+            return [f'{indent}robot.set_move_acceleration({accel})']
+        if op == 'flippermoremove_movementSetStopMethod':
+            mode = flds.get('STOP', ['coast'])[0].lower()
+            return [f'{indent}robot.set_move_stop_mode({mode!r})']
+
+        # ── Motor advanced (flippermoremotor_*) ───────────────────────────────────
+        if op == 'flippermoremotor_motorStartPower':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            power = self.render_expr(ins.get('POWER'))
+            return [f'{indent}robot.run_motor_power(port.{port_name}, {power})']
+        if op == 'flippermoremotor_motorGoToRelativePosition':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            position = self.render_expr(ins.get('POSITION'))
+            speed = self.render_expr(ins.get('SPEED'))
+            return [f'{indent}robot.motor_go_to_relative_position(port.{port_name}, {position}, {speed})']
+        if op == 'flippermoremotor_motorSetAcceleration':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            accel = self.render_expr(ins.get('ACCELERATION'))
+            return [f'{indent}robot.set_motor_acceleration(port.{port_name}, {accel})']
+
+        # ── Hub display (flipperlight_*) ───────────────────────────────────────────
+        if op == 'flipperlight_lightDisplayOff':
+            return [f'{indent}robot.hub_display_off()']
+        if op == 'flipperlight_lightDisplayImageOnForTime':
+            matrix = self.render_expr(ins.get('MATRIX'))
+            value = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.hub_show_image_for({matrix}, {value})']
+        if op == 'flipperlight_lightDisplayRotate':
+            direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
+            return [f'{indent}robot.hub_display_rotate({direction!r})']
+        if op == 'flipperlight_lightDisplaySetBrightness':
+            brightness = self.render_expr(ins.get('BRIGHTNESS'))
+            return [f'{indent}robot.hub_display_brightness({brightness})']
+        if op == 'flipperlight_lightDisplaySetOrientation':
+            orientation = self._menu_value(ins.get('ORIENTATION')) or 'upright'
+            return [f'{indent}robot.hub_display_orientation({orientation!r})']
+        if op == 'flipperlight_lightDisplaySetPixel':
+            x = self.render_expr(ins.get('X'))
+            y = self.render_expr(ins.get('Y'))
+            brightness = self.render_expr(ins.get('BRIGHTNESS'))
+            return [f'{indent}robot.hub_set_pixel({x}, {y}, {brightness})']
+        if op == 'flipperlight_ultrasonicLightUp':
+            port_name = self._menu_value(ins.get('PORT')) or 'A'
+            value = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.ultrasonic_light(port.{port_name}, {value})']
+
+        # ── Control ───────────────────────────────────────────────────────────────
+        if op == 'flippercontrol_stopOtherStacks':
+            return [f'{indent}run.stop_other_stacks()']
+
+        # ── Sound (standard Scratch sound blocks) ────────────────────────────────
+        if op == 'sound_setvolumeto':
+            volume = self.render_expr(ins.get('VOLUME'))
+            return [f'{indent}robot.set_volume({volume})']
+        if op == 'sound_changevolumeby':
+            volume = self.render_expr(ins.get('VOLUME'))
+            return [f'{indent}robot.change_volume({volume})']
+        if op == 'sound_seteffectto':
+            effect = flds.get('EFFECT', ['pitch'])[0].lower()
+            value = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.set_sound_effect({effect!r}, {value})']
+        if op == 'sound_changeeffectby':
+            effect = flds.get('EFFECT', ['pitch'])[0].lower()
+            value = self.render_expr(ins.get('VALUE'))
+            return [f'{indent}robot.change_sound_effect({effect!r}, {value})']
+
         self._unknown_stmts.add(op or 'unknown')
         return [f'{indent}pass  # TODO: {op!r}']
 
@@ -616,21 +731,83 @@ class _PFExport:
                 body = ['    pass']
             proc_chunks.append(['@robot.proc', f'def {proc["name"]}({args}):', *body, ''])
 
-        starts = [bid for bid, b in self.blocks.items()
-                  if b.get('opcode') == 'flipperevents_whenProgramStarts' and b.get('topLevel')]
-        main_chunks: list[list[str]] = []
-        if len(starts) <= 1:
-            body = self.render_stmt_chain(self.blocks[starts[0]].get('next') if starts else None, '    ')
-            if not body:
-                body = ['    pass']
-            main_chunks.append(['@run.main', 'def main():', *body, ''])
-        else:
-            for i, s in enumerate(starts):
-                fn_name = 'main' if i == 0 else f'main_{i}'
-                body = self.render_stmt_chain(self.blocks[s].get('next'), '    ')
-                if not body:
-                    body = ['    pass']
-                main_chunks.append(['@run.main', f'def {fn_name}():', *body, ''])
+        # ── Collect all top-level event blocks ────────────────────────────────
+        event_chunks: list[list[str]] = []
+        main_counter = [0]
+        event_counter: dict[str, int] = {}
+
+        def _fn_name(base: str) -> str:
+            event_counter[base] = event_counter.get(base, 0) + 1
+            n = event_counter[base]
+            return base if n == 1 else f'{base}_{n}'
+
+        for bid, b in self.blocks.items():
+            if not b.get('topLevel'):
+                continue
+            evop = b.get('opcode', '')
+            body_lines = self.render_stmt_chain(b.get('next'), '    ') or ['    pass']
+
+            if evop == 'flipperevents_whenProgramStarts':
+                main_counter[0] += 1
+                fn = 'main' if main_counter[0] == 1 else f'main_{main_counter[0]}'
+                event_chunks.append(['@run.main', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenButton':
+                button = b.get('fields', {}).get('BUTTON', ['center'])[0]
+                event = b.get('fields', {}).get('EVENT', ['pressed'])[0]
+                fn = _fn_name('on_button')
+                event_chunks.append([f'@run.when_button({button!r}, {event!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenGesture':
+                gesture = b.get('fields', {}).get('EVENT', ['shake'])[0]
+                fn = _fn_name('on_gesture')
+                event_chunks.append([f'@run.when_gesture({gesture!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenOrientation':
+                value = b.get('fields', {}).get('VALUE', ['front'])[0]
+                fn = _fn_name('on_orientation')
+                event_chunks.append([f'@run.when_orientation({value!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenTilted':
+                direction = self._menu_value(b.get('inputs', {}).get('VALUE')) or 'any'
+                fn = _fn_name('on_tilted')
+                event_chunks.append([f'@run.when_tilted({direction!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenTimer':
+                threshold = self.render_expr(b.get('inputs', {}).get('VALUE'))
+                fn = _fn_name('on_timer')
+                event_chunks.append([f'@run.when_timer({threshold})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenColor':
+                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                option = self._menu_value(b.get('inputs', {}).get('OPTION')) or 'any'
+                fn = _fn_name('on_color')
+                event_chunks.append([f'@run.when_color(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenPressed':
+                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                option = b.get('fields', {}).get('OPTION', ['pressed'])[0]
+                fn = _fn_name('on_pressed')
+                event_chunks.append([f'@run.when_pressed(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'flipperevents_whenCondition':
+                cond = self.render_expr(b.get('inputs', {}).get('CONDITION'))
+                fn = _fn_name('on_condition')
+                event_chunks.append([f'@run.when_condition(lambda: {cond})', f'def {fn}():', *body_lines, ''])
+
+            elif evop == 'event_whenbroadcastreceived':
+                broadcast = b.get('fields', {}).get('BROADCAST_OPTION', ['message1'])[0]
+                fn = _fn_name('on_broadcast')
+                event_chunks.append([f'@run.when_broadcast({broadcast!r})', f'def {fn}():', *body_lines, ''])
+
+            elif evop in {
+                'procedures_definition', 'procedures_prototype',
+                'flipperevents_color-selector', 'flipperevents_color-sensor-selector',
+                'flipperevents_custom-tilted', 'flipperevents_force-sensor-selector',
+            }:
+                pass  # handled separately or are menu blocks
+
+            # else: unknown top-level opcode — will appear in unknown_stmts via render_stmt
 
         # ── Pass 2: assemble file with header determined from pass 1 ──────────
         doc_path = Path(self.doc.path).name
@@ -692,11 +869,28 @@ class _PFExport:
             for chunk in proc_chunks:
                 out.extend(chunk)
 
-        # Entry points section
-        out.append(_section('Entry point(s)'))
-        out.append('')
-        for chunk in main_chunks:
-            out.extend(chunk)
+        # Entry points and event handlers
+        has_main = any(c[0] == '@run.main' for c in event_chunks)
+        has_events = any(c[0] != '@run.main' for c in event_chunks)
+
+        if has_main:
+            out.append(_section('Entry point(s)'))
+            out.append('')
+            for chunk in event_chunks:
+                if chunk[0] == '@run.main':
+                    out.extend(chunk)
+
+        if has_events:
+            out.append(_section('Event handlers'))
+            out.append('')
+            for chunk in event_chunks:
+                if chunk[0] != '@run.main':
+                    out.extend(chunk)
+
+        if not event_chunks:
+            out.append(_section('Entry point(s)'))
+            out.append('')
+            out.extend(['@run.main', 'def main():', '    pass', ''])
 
         # Unknown opcodes summary (diagnostic footer)
         if self._unknown_stmts or self._unknown_exprs:
