@@ -855,7 +855,7 @@ class _PFExport:
             return [f'{indent}while not ({cond}):', *body]
         if op == 'control_wait_until':
             cond = self.render_expr(ins.get('CONDITION'))
-            return [f'{indent}while not ({cond}):', f'{indent}    run.sleep(0.05)  # poll']
+            return [f'{indent}run.wait_until(lambda: {cond})']
         if op in {'control_stop', 'flippercontrol_stop'}:
             option = flds.get('STOP_OPTION', ['this script'])[0] if flds.get('STOP_OPTION') else 'this script'
             if option == 'this script':
@@ -1488,10 +1488,20 @@ class _PFExport:
             ]
 
         # Variables section — stage globals first, then sprite locals
-        if all_proj_vars:
+        # Skip compiler-generated internal variables (loop control, return helpers).
+        _INTERNAL_PATTERNS = ('__break_', '__continue_', '__range_value_', '__return_', '__retval_')
+
+        def _is_internal_var(raw_name: str) -> bool:
+            """Return True for compiler-generated internal variables to skip in export."""
+            # Matches both plain (__break_N) and namespaced (fn__break_N) forms.
+            return any(p in raw_name for p in _INTERNAL_PATTERNS)
+
+        user_proj_vars = {vid: pair for vid, pair in all_proj_vars.items()
+                          if not _is_internal_var(pair[0])}
+        if user_proj_vars:
             out.append(_section('Variables'))
-            stage_vars = {vid: pair for vid, pair in all_proj_vars.items() if vid in self._stage_var_ids}
-            sprite_vars = {vid: pair for vid, pair in all_proj_vars.items() if vid not in self._stage_var_ids}
+            stage_vars = {vid: pair for vid, pair in user_proj_vars.items() if vid in self._stage_var_ids}
+            sprite_vars = {vid: pair for vid, pair in user_proj_vars.items() if vid not in self._stage_var_ids}
             if stage_vars and sprite_vars:
                 out.append('# Global variables (stage):')
             for vid, pair in stage_vars.items():

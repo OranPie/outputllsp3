@@ -253,7 +253,9 @@ class MotorAPI:
     def stop(self, port: Any) -> str: return self._w().flippermotor.motor_stop(PORT=str(port))
     def run_for_degrees(self, port: Any, degrees: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=degrees, UNIT="degrees", SPEED=speed)
     def run_for_seconds(self, port: Any, seconds: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=seconds, UNIT="seconds", SPEED=speed)
-    def set_stop_mode(self, port: Any, mode: str = "brake") -> str: return self._w().flippermoremotor.motor_set_stop_method(PORT=str(port), STOP=mode)
+    def set_stop_mode(self, port: Any, mode: Any = "brake") -> str: return self.project.motor_set_stop_method(str(port), str(mode))
+    def set_acceleration(self, port: Any, accel: Any) -> str: return self.project.motor_set_acceleration(str(port), accel)
+    def set_speed(self, port: Any, speed: Any) -> str: return self.project.motor_set_speed(str(port), speed)
     def run_for_direction(self, port: Any, direction: Any, value: Any, unit: str = "degrees") -> str:
         """Run motor for a given amount in a given direction (no speed arg — uses configured speed)."""
         return self._w().flippermotor.motor_turn_for_direction(PORT=str(port), DIRECTION=str(direction), VALUE=value, UNIT=unit)
@@ -318,6 +320,8 @@ class LightAPI:
     def clear(self) -> str: return self._w().flipperlight.light_display_off()
     def set_brightness(self, brightness: Any) -> str: return self._w().flipperlight.light_display_set_brightness(BRIGHTNESS=brightness)
     def set_center_button(self, color: Any) -> str: return self._w().flipperlight.center_button_light(COLOR=color)
+    def rotate(self, direction: Any) -> str: return self._w().flipperlight.light_display_rotate(DIRECTION=str(direction))
+    def set_orientation(self, orientation: Any) -> str: return self._w().flipperlight.light_display_set_orientation(ORIENTATION=str(orientation))
 
 
 @dataclass

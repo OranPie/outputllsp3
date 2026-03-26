@@ -24,7 +24,11 @@ class VariableManager:
     # -- namespace helpers ------------------------------------------------
 
     def sanitize_namespace(self, value: str) -> str:
-        return re.sub(r"[^A-Za-z0-9_]+", "__", str(value)).strip("_")
+        # Preserve Unicode characters (valid in Scratch variable names and Python
+        # identifiers). Only collapse consecutive underscores so that the double-
+        # underscore namespace separator (__) is never introduced accidentally.
+        sanitized = re.sub(r"__+", "_", str(value)).strip("_")
+        return sanitized
 
     def set_default_namespace(self, namespace: str | None, *, function_namespace: bool = False) -> None:
         self._p.default_namespace = self.sanitize_namespace(namespace or "")

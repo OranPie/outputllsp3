@@ -107,6 +107,11 @@ class _RunModule:
     def broadcast_and_wait(self, message: str): return None
     def sleep_ms(self, ms: int): return None
     def sleep(self, seconds: float): return None
+    def wait_until(self, condition): return None
+    def stop_other_stacks(self): return None
+    def stop(self): return None
+    def reset_timer(self): return None
+    def timer(self) -> float: return 0.0
 
 
 class _RobotModule:
@@ -133,6 +138,20 @@ class _RobotModule:
     def run_motor(self, port: Any, speed: Any): return None
     def stop_motor(self, port: Any): return None
     def motor_run_for_degrees(self, port: Any, degrees: Any, speed: Any): return None
+    def run_motor_power(self, port: Any, power: Any): return None
+    def set_stop_mode(self, port: Any, mode: Any = 'brake'): return None
+    def set_motor_stop_mode(self, port: Any, mode: Any = 'brake'): return None
+    def set_motor_position(self, port: Any, value: Any = 0): return None
+    def set_motor_acceleration(self, port: Any, accel: Any = 100): return None
+    def motor_go_to_position(self, port: Any, direction: Any = 'shortest', position: Any = 0): return None
+    def run_motor_for(self, port: Any, direction: Any = 'clockwise', value: Any = 0, unit: Any = 'degrees'): return None
+    def hub_display_off(self): return None
+    def hub_show_image(self, image: Any): return None
+    def hub_show_image_for(self, image: Any, seconds: Any = 1): return None
+    def hub_display_brightness(self, brightness: Any = 100): return None
+    def hub_display_rotate(self, direction: Any = 'clockwise'): return None
+    def hub_display_orientation(self, orientation: Any = 'upright'): return None
+    def hub_set_pixel(self, x: Any = 0, y: Any = 0, brightness: Any = 100): return None
 
     def angle(self, axis: Any = "yaw"):
         raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")

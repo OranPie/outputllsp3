@@ -357,6 +357,34 @@ class BlockManager:
             mutation={"tagName": "mutation", "children": [], "hasnext": "false"},
         )
 
+    def stop_other_stacks(self) -> str:
+        return self.add_block("flippercontrol_stopOtherStacks")
+
+    def motor_set_stop_method(self, port: str, mode: str = "brake") -> str:
+        m = self.multiple_motor_menu(port)
+        # STOP field: '0' = coast, '1' = brake, '2' = hold
+        mode_map = {'coast': '0', '0': '0', 'brake': '1', '1': '1', 'hold': '2', '2': '2'}
+        stop_val = mode_map.get(str(mode).lower(), '1')
+        return self.add_block(
+            "flippermoremotor_motorSetStopMethod",
+            inputs={"PORT": self.ref_menu(m)},
+            fields={"STOP": [stop_val, None]},
+        )
+
+    def motor_set_acceleration(self, port: str, accel: Any) -> str:
+        m = self.multiple_motor_menu(port)
+        return self.add_block(
+            "flippermoremotor_motorSetAcceleration",
+            inputs={"PORT": self.ref_menu(m), "ACCELERATION": self._num_input(accel)},
+        )
+
+    def motor_set_speed(self, port: str, speed: Any) -> str:
+        m = self.single_motor_menu(port)
+        return self.add_block(
+            "flippermotor_motorSetSpeed",
+            inputs={"PORT": self.ref_menu(m), "SPEED": self._num_input(speed)},
+        )
+
     # -- argument / hardware helpers --------------------------------------
 
     def arg(self, name: str) -> str:

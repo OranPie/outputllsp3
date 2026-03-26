@@ -34,6 +34,21 @@ _ENUM_ATTRS.update({f"MotorPair.{m.name}": m.value for m in MotorPair})
 _ENUM_ATTRS.update({f"Port.{m.name}": m.value for m in Port})
 _ENUM_ATTRS.update({f"StopMode.{m.name}": m.value for m in StopMode})
 
+# All valid SPIKE port strings (single and multi-port combinations).
+_PORT_MAP: dict[str, str] = {
+    f"port.{p}": p for p in (
+        "A", "B", "C", "D", "E", "F",
+        "AB", "AC", "AD", "AE", "AF",
+        "BC", "BD", "BE", "BF",
+        "CD", "CE", "CF", "DE", "DF", "EF",
+        "ABC", "ABD", "ABE", "ABF",
+        "ACD", "ACE", "ACF", "ADE", "ADF", "AEF",
+        "BCD", "BCE", "BCF", "BDE", "BDF", "BEF",
+        "CDE", "CDF", "CEF", "DEF",
+        "ABCD", "ABCDE", "ABCDEF",
+    )
+}
+
 # stdlib result attribute lookup: "stdlib.<name>" → (group_to_install, stdlib_property_name)
 # Both the canonical _result-suffixed names and shorthand aliases are included so
 # users can write either `stdlib.clamp_result` or simply `stdlib.clamp` to read back
@@ -60,6 +75,21 @@ _STDLIB_RESULT_ATTRS: dict[str, tuple[str, str]] = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _has_direct_break(body: list) -> bool:
+    """Return True if body directly contains a Break (not inside a nested loop)."""
+    for node in body:
+        if isinstance(node, ast.Break):
+            return True
+        if isinstance(node, (ast.While, ast.For)):
+            continue  # break in nested loop is independent
+        for child in ast.walk(node):
+            if isinstance(child, (ast.While, ast.For)):
+                continue
+            if isinstance(child, ast.Break):
+                return True
+    return False
 
 
 class UnsupportedNode(Exception):
@@ -126,6 +156,11 @@ class PythonFirstContext:
         self._fn_notes: dict[str, list[str]] = {}
         # robot.note('text', floating=True) calls collected at module level.
         self._floating_notes: list[str] = []
+        # Module-level variable declarations: name → initial_value.
+        # Pre-declared as global Scratch variables so that assignments to these
+        # names inside function bodies use the global scope (no fn_name prefix),
+        # matching Scratch semantics where all variables are global by default.
+        self._global_vars: dict[str, Any] = {}
         self.runtime_config = {
             "motor_pair": "AB",
             "left_dir": 1,
@@ -230,6 +265,10 @@ class PythonFirstContext:
                 value = self.const_eval(node.value)
                 if value is not None:
                     self.const_env[tname] = value
+                    # Track as a global variable so function-body assignments use
+                    # global scope (no fn_name namespace prefix), matching Scratch
+                    # semantics where all variables are globally shared.
+                    self._global_vars[tname] = value
                     continue
             # Collect robot.show_monitor() calls at module level for deferred registration.
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
@@ -269,8 +308,13 @@ class PythonFirstContext:
     def declare_resources(self):
         for pyname, lname in self.list_decls.items():
             self.api.lists.add(lname, [])
-        # Create explicit variables only when a top-level constant is referenced later via vars lookup.
-        # In python-first mode, constants are typically inlined.
+        # Pre-declare all module-level global variables with their declared initial
+        # values. This ensures correct initial values AND that function-body
+        # assignments to these names will find an existing global variable.
+        # namespace="" means no prefix (truly global); namespace=None would use
+        # the project's default (file-stem) namespace instead.
+        for varname, init_val in self._global_vars.items():
+            self.api.vars.add(varname, init_val, namespace="")
 
     # ---------- compile ----------
 
@@ -414,11 +458,8 @@ class PythonFirstContext:
             return self.const_env.get(expr.id)
         if isinstance(expr, ast.Attribute):
             name = self.attr_name(expr)
-            ports = {
-                "port.A": "A", "port.B": "B", "port.C": "C", "port.D": "D", "port.E": "E", "port.F": "F",
-            }
-            if name in ports:
-                return ports[name]
+            if name in _PORT_MAP:
+                return _PORT_MAP[name]
             if name in _ENUM_ATTRS:
                 return _ENUM_ATTRS[name]
             return self.const_env.get(name)
@@ -475,6 +516,10 @@ class PythonFirstContext:
                 return self.project.arg(expr.id)
             if expr.id in self.list_decls:
                 return self.api.lists.length(self.list_decls[expr.id])
+            # Global vars declared at module level: use the variable reporter
+            # (not the inlined const) so Scratch reads the live variable value.
+            if expr.id in self._global_vars:
+                return self.api.vars.get(expr.id, namespace="")
             if expr.id in self.const_env:
                 return self.const_env[expr.id]
             try:
@@ -486,11 +531,8 @@ class PythonFirstContext:
                     return expr.id
         if isinstance(expr, ast.Attribute):
             name = self.attr_name(expr)
-            ports = {
-                "port.A": "A", "port.B": "B", "port.C": "C", "port.D": "D", "port.E": "E", "port.F": "F",
-            }
-            if name in ports:
-                return ports[name]
+            if name in _PORT_MAP:
+                return _PORT_MAP[name]
             if name in _ENUM_ATTRS:
                 return _ENUM_ATTRS[name]
             if name in self.const_env:
@@ -540,7 +582,7 @@ class PythonFirstContext:
                 port = self.compile_expr(expr.args[0], fn_name, params)
                 return self.api.sensor.reflectivity(port)
             # sensor reporters without port
-            if fname == 'robot.timer':
+            if fname in ('robot.timer', 'run.timer'):
                 return self.api.sensor.timer()
             if fname == 'robot.loudness':
                 return self.api.sensor.loudness()
@@ -785,6 +827,9 @@ class PythonFirstContext:
             target_node = stmt.targets[0]
             if isinstance(target_node, ast.Name):
                 target = target_node.id
+                # Use global scope for module-level declared variables; otherwise
+                # scope to the current function to isolate function-local state.
+                eff_ns = "" if target in self._global_vars else fn_name
                 # Direct assignment from a proc call with return value: result = my_proc(args)
                 if (isinstance(stmt.value, ast.Call) and
                         isinstance(stmt.value.func, ast.Name) and
@@ -793,11 +838,11 @@ class PythonFirstContext:
                     rctx = self.proc_return_vars[proc_name]
                     full_args = self._fill_proc_args(proc_name, stmt.value, fn_name, params)
                     call_blk = self.api.flow.call(proc_name, *full_args)
-                    self.api.vars.ensure(target, 0, namespace=fn_name)
+                    self.api.vars.ensure(target, 0, namespace=eff_ns)
                     assign_blk = self.api.vars.set(
                         target,
                         self.api.vars.get(rctx.retval_var, raw=True),
-                        namespace=fn_name,
+                        namespace=eff_ns,
                     )
                     return [call_blk, assign_blk]
                 # top-level list declaration inside function is not supported, but keep note
@@ -806,8 +851,8 @@ class PythonFirstContext:
                     self.list_decls[target] = lname
                     self.api.lists.add(lname, [])
                     return []
-                self.api.vars.ensure(target, 0, namespace=fn_name)
-                return [self.api.vars.set(target, self.compile_expr(stmt.value, fn_name, params), namespace=fn_name)]
+                self.api.vars.ensure(target, 0, namespace=eff_ns)
+                return [self.api.vars.set(target, self.compile_expr(stmt.value, fn_name, params), namespace=eff_ns)]
             if isinstance(target_node, ast.Subscript) and isinstance(target_node.value, ast.Name) and target_node.value.id in self.list_decls:
                 index_expr = self._compile_subscript_index(target_node.slice, fn_name, params)
                 one_based = self.api.ops.add(index_expr, 1)
@@ -815,17 +860,18 @@ class PythonFirstContext:
 
         if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
             name = stmt.target.id
-            self.api.vars.ensure(name, 0, namespace=fn_name)
+            eff_ns = "" if name in self._global_vars else fn_name
+            self.api.vars.ensure(name, 0, namespace=eff_ns)
             rhs = self.compile_expr(stmt.value, fn_name, params)
-            cur = self.api.vars.get(name, namespace=fn_name)
+            cur = self.api.vars.get(name, namespace=eff_ns)
             if isinstance(stmt.op, ast.Add):
-                return [self.api.vars.set(name, self.api.ops.add(cur, rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.add(cur, rhs), namespace=eff_ns)]
             if isinstance(stmt.op, ast.Sub):
-                return [self.api.vars.set(name, self.api.ops.sub(cur, rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.sub(cur, rhs), namespace=eff_ns)]
             if isinstance(stmt.op, ast.Mult):
-                return [self.api.vars.set(name, self.api.ops.mul(cur, rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.mul(cur, rhs), namespace=eff_ns)]
             if isinstance(stmt.op, ast.Div):
-                return [self.api.vars.set(name, self.api.ops.div(cur, rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.div(cur, rhs), namespace=eff_ns)]
 
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             return [self.compile_call(stmt.value, fn_name, params)]
@@ -833,15 +879,25 @@ class PythonFirstContext:
         if isinstance(stmt, ast.If):
             cond = self.compile_condition(stmt.test, fn_name, params)
             body = self.compile_body(stmt.body, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
-            out = [self.api.flow.if_(cond, *body)] if body else []
             if stmt.orelse:
-                else_cond = self.negate_condition(stmt.test, fn_name, params)
                 else_body = self.compile_body(stmt.orelse, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
+                if body and else_body:
+                    return [self.api.flow.if_else(cond, body, else_body)]
+                if body:
+                    return [self.api.flow.if_(cond, *body)]
                 if else_body:
-                    out.append(self.api.flow.if_(else_cond, *else_body))
-            return out
+                    neg_cond = self.negate_condition(stmt.test, fn_name, params)
+                    return [self.api.flow.if_(neg_cond, *else_body)]
+                return []
+            return [self.api.flow.if_(cond, *body)] if body else []
 
         if isinstance(stmt, ast.While):
+            # `while True:` with no break → native forever block (simpler)
+            is_forever = isinstance(stmt.test, ast.Constant) and stmt.test.value is True
+            if is_forever and not _has_direct_break(stmt.body) and not stmt.orelse:
+                body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
+                return [self.api.flow.forever(*body_blocks)]
+
             break_var = f"__break_{getattr(stmt,'lineno','while')}"
             cont_var = f"__continue_{getattr(stmt,'lineno','while')}"
             self.api.vars.ensure(break_var, 0, namespace=fn_name)
@@ -853,7 +909,7 @@ class PythonFirstContext:
             ]
             body_blocks = [self.api.vars.set(cont_var, 0, namespace=fn_name)]
             body_blocks.extend(self.compile_body(stmt.body, fn_name, params, loop_ctx=wctx, return_ctx=return_ctx))
-            if isinstance(stmt.test, ast.Constant) and stmt.test.value is True:
+            if is_forever:
                 end_cond = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 1)
             else:
                 end_cond = self.api.ops.or_(
@@ -868,6 +924,21 @@ class PythonFirstContext:
             return out
 
         if isinstance(stmt, ast.For):
+            # `for _ in range(N):` with constant N and no break/continue → native repeat block
+            loop_var_name = stmt.target.id if isinstance(stmt.target, ast.Name) else None
+            is_simple_range = (
+                loop_var_name == '_'
+                and isinstance(stmt.iter, ast.Call)
+                and self.attr_name(stmt.iter.func) == 'range'
+                and len(stmt.iter.args) == 1
+                and not _has_direct_break(stmt.body)
+                and not stmt.orelse
+            )
+            if is_simple_range:
+                n = self.compile_expr(stmt.iter.args[0], fn_name, params)
+                body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
+                return [self.api.flow.repeat(n, *body_blocks)]
+
             break_var = f"__break_{getattr(stmt,'lineno','for')}"
             cont_var = f"__continue_{getattr(stmt,'lineno','for')}"
             self.api.vars.ensure(break_var, 0, namespace=fn_name)
@@ -1072,6 +1143,17 @@ class PythonFirstContext:
         if name == 'run.sleep':
             secs = self.compile_expr(call.args[0], fn_name, params) if call.args else 0
             return self.api.wait.seconds(float(secs) if isinstance(secs, (int, float)) else 0)
+        if name == 'run.wait_until':
+            # run.wait_until(lambda: condition_expr)
+            if call.args and isinstance(call.args[0], ast.Lambda):
+                cond = self.compile_condition(call.args[0].body, fn_name, params)
+            elif call.args:
+                cond = self.compile_condition(call.args[0], fn_name, params)
+            else:
+                return None
+            return self.api.flow.wait_until(cond)
+        if name in ('run.reset_timer', 'robot.reset_timer'):
+            return self.api.sensor.reset_timer()
         if name == 'run.broadcast':
             msg = self.const_eval(call.args[0]) if call.args else ''
             if isinstance(msg, str) and msg:
@@ -1197,8 +1279,22 @@ class PythonFirstContext:
             direction = args[1] if len(args) > 1 else 'shortest'
             position = args[2] if len(args) > 2 else 0
             return self.api.motor.go_to_position(port, direction, position)
-        if name == 'robot.set_motor_stop_mode':
+        if name == 'robot.set_motor_stop_mode' or name == 'robot.set_stop_mode':
             return self.api.motor.set_stop_mode(args[0] if args else 'A', args[1] if len(args) > 1 else 'brake')
+        if name == 'robot.set_motor_speed':
+            return self.api.motor.set_speed(args[0] if args else 'A', args[1] if len(args) > 1 else 500)
+        if name == 'robot.set_motor_position' or name == 'robot.motor_set_position':
+            port = args[0] if args else 'A'
+            value = args[1] if len(args) > 1 else 0
+            return self.api.motor.set_relative_position(port, value)
+        if name == 'robot.set_motor_acceleration' or name == 'robot.motor_set_acceleration':
+            port = args[0] if args else 'A'
+            accel = args[1] if len(args) > 1 else 100
+            return self.api.motor.set_acceleration(port, accel)
+        if name == 'run.stop_other_stacks':
+            return self.api.flow.stop_other_stacks()
+        if name == 'run.stop':
+            return self.api.flow.stop()
         if name == 'robot.motor_reset_position':
             port = args[0] if args else 'A'
             value = args[1] if len(args) > 1 else 0
@@ -1218,6 +1314,26 @@ class PythonFirstContext:
             return self.api.light.set_brightness(args[0] if args else 100)
         if name == 'robot.set_center_light':
             return self.api.light.set_center_button(args[0] if args else 'white')
+        # hub display aliases (robot.hub_* generated by exporter)
+        if name == 'robot.hub_display_off':
+            return self.api.light.clear()
+        if name == 'robot.hub_show_image':
+            return self.api.light.show_image(args[0] if args else 'HEART')
+        if name == 'robot.hub_show_image_for':
+            image = args[0] if args else 'HEART'
+            seconds = args[1] if len(args) > 1 else 1
+            return self.api.light.show_image_for(image, seconds)
+        if name == 'robot.hub_display_brightness':
+            return self.api.light.set_brightness(args[0] if args else 100)
+        if name == 'robot.hub_display_rotate':
+            return self.api.light.rotate(args[0] if args else 'clockwise')
+        if name == 'robot.hub_display_orientation':
+            return self.api.light.set_orientation(args[0] if args else 'upright')
+        if name == 'robot.hub_set_pixel':
+            x = args[0] if args else 0
+            y = args[1] if len(args) > 1 else 0
+            brightness = args[2] if len(args) > 2 else 100
+            return self.api.light.set_pixel(x, y, brightness)
         if name == 'robot.play_sound':
             return self.api.sound.play(args[0] if args else 1)
         if name == 'robot.play_sound_until_done':

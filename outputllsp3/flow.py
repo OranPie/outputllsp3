@@ -282,6 +282,10 @@ class FlowBuilder:
         """``control_stop`` – stop all scripts."""
         return self.project.stop_all()
 
+    def stop_other_stacks(self) -> str:
+        """``flippercontrol_stopOtherStacks`` – stop all other running stacks."""
+        return self.project.stop_other_stacks()
+
     def broadcast(self, message: str) -> str:
         """``event_broadcast`` – send a message (fire-and-forget)."""
         return self.project.broadcast(message)

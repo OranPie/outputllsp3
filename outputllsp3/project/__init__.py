@@ -208,6 +208,7 @@ class LLSP3Project:
     def wait(self, seconds: float) -> str: return self._blocks.wait(seconds)
     def wait_until(self, condition: Any) -> str: return self._blocks.wait_until(condition)
     def stop_all(self) -> str: return self._blocks.stop_all()
+    def stop_other_stacks(self) -> str: return self._blocks.stop_other_stacks()
     def broadcast(self, message: str) -> str: return self._blocks.broadcast(message)
     def broadcast_and_wait(self, message: str) -> str: return self._blocks.broadcast_and_wait(message)
 
@@ -231,6 +232,9 @@ class LLSP3Project:
     def start_dual_speed(self, left: Any, right: Any) -> str: return self._blocks.start_dual_speed(left, right)
     def start_dual_power(self, left: Any, right: Any) -> str: return self._blocks.start_dual_power(left, right)
     def stop_moving(self) -> str: return self._blocks.stop_moving()
+    def motor_set_stop_method(self, port: str, mode: str = "brake") -> str: return self._blocks.motor_set_stop_method(port, mode)
+    def motor_set_acceleration(self, port: str, accel: Any) -> str: return self._blocks.motor_set_acceleration(port, accel)
+    def motor_set_speed(self, port: str, speed: Any) -> str: return self._blocks.motor_set_speed(port, speed)
 
     # == VariableManager delegation =======================================
 
