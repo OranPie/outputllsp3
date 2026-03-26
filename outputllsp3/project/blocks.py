@@ -361,28 +361,24 @@ class BlockManager:
         return self.add_block("flippercontrol_stopOtherStacks")
 
     def motor_set_stop_method(self, port: str, mode: str = "brake") -> str:
-        m = self.multiple_motor_menu(port)
-        # STOP field: '0' = coast, '1' = brake, '2' = hold
         mode_map = {'coast': '0', '0': '0', 'brake': '1', '1': '1', 'hold': '2', '2': '2'}
         stop_val = mode_map.get(str(mode).lower(), '1')
         return self.add_block(
             "flippermoremotor_motorSetStopMethod",
-            inputs={"PORT": self.ref_menu(m)},
+            inputs={"PORT": self._port_input(port, shadow_type="multiple")},
             fields={"STOP": [stop_val, None]},
         )
 
     def motor_set_acceleration(self, port: str, accel: Any) -> str:
-        m = self.multiple_motor_menu(port)
         return self.add_block(
             "flippermoremotor_motorSetAcceleration",
-            inputs={"PORT": self.ref_menu(m), "ACCELERATION": self._num_input(accel)},
+            inputs={"PORT": self._port_input(port, shadow_type="multiple"), "ACCELERATION": self._num_input(accel)},
         )
 
     def motor_set_speed(self, port: str, speed: Any) -> str:
-        m = self.single_motor_menu(port)
         return self.add_block(
             "flippermotor_motorSetSpeed",
-            inputs={"PORT": self.ref_menu(m), "SPEED": self._num_input(speed)},
+            inputs={"PORT": self._port_input(port, shadow_type="single"), "SPEED": self._num_input(speed)},
         )
 
     # -- argument / hardware helpers --------------------------------------
@@ -408,6 +404,22 @@ class BlockManager:
             fields={"field_flippermoremotor_multiple-port-selector": [port, None]},
         )
 
+    def _port_input(self, port: Any, *, shadow_type: str = "single") -> list:
+        """Return the Scratch PORT input encoding for a static or dynamic port value.
+
+        For literal port letters ('A', 'B', 'BC', …) returns ``[1, shadow_id]``.
+        For dynamic values (block IDs already in the project) returns
+        ``[3, reporter_id, shadow_id]`` — a reporter covering the shadow menu.
+        """
+        is_dynamic = isinstance(port, str) and port in self._p.blocks
+        if shadow_type == "single":
+            shadow = self.single_motor_menu("A" if is_dynamic else str(port))
+        else:
+            shadow = self.multiple_motor_menu("A" if is_dynamic else str(port))
+        if is_dynamic:
+            return [3, port, shadow]
+        return self.ref_menu(shadow)
+
     def set_movement_pair(self, pair: str = "AB") -> str:
         m = self.movement_pair_menu(pair)
         return self.add_block("flippermove_setMovementPair", inputs={"PAIR": self.ref_menu(m)})
@@ -419,14 +431,12 @@ class BlockManager:
         return self.add_block("flippersensors_orientationAxis", fields={"AXIS": ["yaw", None]})
 
     def motor_relative_position(self, port: str) -> str:
-        m = self.single_motor_menu(port)
-        return self.add_block("flippermoremotor_position", inputs={"PORT": self.ref_menu(m)})
+        return self.add_block("flippermoremotor_position", inputs={"PORT": self._port_input(port, shadow_type="single")})
 
     def motor_set_relative_position(self, port: str, value: int | float) -> str:
-        m = self.multiple_motor_menu(port)
         return self.add_block(
             "flippermoremotor_motorSetDegreeCounted",
-            inputs={"PORT": self.ref_menu(m), "VALUE": self.lit_number(value)},
+            inputs={"PORT": self._port_input(port, shadow_type="multiple"), "VALUE": self.lit_number(value)},
         )
 
     def start_dual_speed(self, left: Any, right: Any) -> str:

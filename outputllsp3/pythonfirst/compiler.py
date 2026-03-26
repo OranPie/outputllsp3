@@ -713,6 +713,16 @@ class PythonFirstContext:
     def compile_condition(self, expr: ast.expr, fn_name: str, params: set[str]) -> str:
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
             return self.negate_condition(expr.operand, fn_name, params)
+        # Handle BoolOp (and/or) — compile each operand as a condition, not as an expression
+        if isinstance(expr, ast.BoolOp) and expr.values:
+            compiled = [self.compile_condition(v, fn_name, params) for v in expr.values]
+            acc = compiled[0]
+            for other in compiled[1:]:
+                if isinstance(expr.op, ast.And):
+                    acc = self.api.ops.and_(acc, other)
+                elif isinstance(expr.op, ast.Or):
+                    acc = self.api.ops.or_(acc, other)
+            return acc
         if isinstance(expr, ast.Compare) and len(expr.ops) == 1 and len(expr.comparators) == 1:
             left = self.compile_expr(expr.left, fn_name, params)
             right_node = expr.comparators[0]
@@ -729,7 +739,7 @@ class PythonFirstContext:
                 contains = self.api.lists.contains(self.list_decls[right_node.id], left)
                 return self.api.ops.not_(contains)
         value = self.compile_expr(expr, fn_name, params)
-        return self.api.ops.gt(value, 0)
+        return self._truthy(value)
 
     def negate_condition(self, expr: ast.expr, fn_name: str, params: set[str]) -> str:
         # Double-negation elimination: negate(not X) → compile_condition(X)

@@ -71,12 +71,18 @@ class OpcodeFunction:
                 meta = schema.inputs[ph]
                 if 'menu' in meta:
                     menu = meta['menu']
+                    is_dynamic = isinstance(value, str) and value in self.project.blocks
+                    shadow_field_val = meta['menu'].get('default_value', 'A') if is_dynamic else str(value)
                     menu_block = self.project.add_block(
                         menu['opcode'],
                         shadow=True,
-                        fields={menu['field_key']: [str(value), None]},
+                        fields={menu['field_key']: [shadow_field_val, None]},
                     )
-                    inputs[ph] = self.project.ref_menu(menu_block)
+                    if is_dynamic:
+                        # Reporter covering shadow menu: [3, reporter_id, shadow_id]
+                        inputs[ph] = [3, value, menu_block]
+                    else:
+                        inputs[ph] = self.project.ref_menu(menu_block)
                     continue
                 if meta.get('kind') == 2:
                     inputs[ph] = self.project.ref_bool(value)
