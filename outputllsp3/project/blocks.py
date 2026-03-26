@@ -15,9 +15,25 @@ if TYPE_CHECKING:
 
 class BlockManager:
     BOOLEAN_OPCODES = {
+        # Core Scratch operators
         "operator_lt", "operator_gt", "operator_equals",
         "operator_or", "operator_and", "operator_not",
         "data_listcontainsitem",
+        # SPIKE Prime / LLSP3 sensor boolean reporters
+        "flippersensors_isColor",
+        "flippersensors_isDistance",
+        "flippersensors_isPressed",
+        "flippersensors_isReflectivity",
+        "flippersensors_buttonIsPressed",
+        "flippersensors_isTilted",
+        "flippersensors_ismotion",
+        "flippersensors_isorientation",
+        "flipperoperator_isInBetween",
+        # EV3 sensor booleans
+        "ev3sensors_isEV3TouchSensorPressed",
+        "ev3sensors_isEV3BrickButtonPressed",
+        "ev3sensors_isEV3InfraredBeaconActive",
+        "ev3sensors_isEV3InfraredBeaconButtonPressed",
     }
     BUILTIN_EXTENSION_PREFIXES = {"argument", "control", "data", "operator", "procedures"}
 
@@ -149,6 +165,24 @@ class BlockManager:
     def chain(self, container: str, block_ids: Iterable[str]) -> str | None:
         ids = [bid for bid in block_ids if bid]
         for i, bid in enumerate(ids):
+            if not isinstance(bid, str):
+                raise TypeError(
+                    f"chain(): expected a block-ID string at position {i}, "
+                    f"got {type(bid).__name__} {bid!r}. "
+                    f"Call a block-building method (e.g. v.set(), move.stop()) "
+                    f"to produce a block ID instead of passing a raw literal."
+                )
+            if bid not in self._p.blocks:
+                if len(bid) == 1:
+                    raise KeyError(
+                        f"chain(): single-character key {bid!r} suggests a string was "
+                        f"star-unpacked (e.g. `*method()` where method() returns one string). "
+                        f"Remove the `*` and pass the block ID directly."
+                    )
+                raise KeyError(
+                    f"chain(): block ID {bid!r} not found in project blocks. "
+                    f"Ensure the block was created before being added to a sequence."
+                )
             self._p.blocks[bid]["parent"] = container if i == 0 else ids[i - 1]
             self._p.blocks[bid]["next"] = ids[i + 1] if i + 1 < len(ids) else None
         return ids[0] if ids else None
@@ -274,8 +308,8 @@ class BlockManager:
 
     # -- timing / stop blocks ---------------------------------------------
 
-    def wait(self, seconds: float) -> str:
-        return self.add_block("control_wait", inputs={"DURATION": self.lit_decimal(seconds)})
+    def wait(self, seconds: Any) -> str:
+        return self.add_block("control_wait", inputs={"DURATION": self._num_input(seconds)})
 
     def wait_until(self, condition: Any) -> str:
         return self.add_block("control_wait_until", inputs={"CONDITION": self.ref_bool(condition)})

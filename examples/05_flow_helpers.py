@@ -3,7 +3,9 @@
 Demonstrates:
 - api.flow.for_loop(var, start, end, *body) — counted loop with auto counter
 - api.flow.while_loop(condition, *body)     — repeat while condition is true
-- api.flow.cond(condition, a, b)            — inline conditional expression
+- api.flow.cond(condition, a, b)            — conditional statement (if-else block)
+  NOTE: cond() is a STATEMENT, not an inline expression.  Both branches must be
+  block IDs (e.g. v.set(...)).  For value selection use a variable + cond().
 - Composing these with sensor and variable blocks
 
 Compile::
@@ -33,14 +35,17 @@ def build(project, api, ns=None):
 
     # --- Procedure: drive until obstacle or N seconds elapsed ---
     v.add("elapsed_ms", 0)
+    v.add("DRIVE_SPEED_L", 30)
+    v.add("DRIVE_SPEED_R", 30)
     f.procedure("DriveUntilBlocked", ["max_ms"], [
         v.set("elapsed_ms", 0),
         *f.for_loop("drive_i", 0, o.div(project.arg("max_ms"), 50),
-            # cond: choose speed based on yaw angle
-            move.dual_speed(
-                f.cond(o.gt(sensor.yaw(), 5), 20, 30),
-                f.cond(o.lt(sensor.yaw(), -5), 20, 30),
-            ),
+            # Adjust speed per side using cond (statement-style: sets variable in if/else)
+            f.cond(o.gt(sensor.yaw(), 5),
+                   v.set("DRIVE_SPEED_L", 20), v.set("DRIVE_SPEED_L", 30)),
+            f.cond(o.lt(sensor.yaw(), -5),
+                   v.set("DRIVE_SPEED_R", 20), v.set("DRIVE_SPEED_R", 30)),
+            move.dual_speed(v.get("DRIVE_SPEED_L"), v.get("DRIVE_SPEED_R")),
             v.change("elapsed_ms", 50),
             wait.ms(50),
         ),
@@ -60,7 +65,7 @@ def build(project, api, ns=None):
 
     # --- Main program ---
     f.start(
-        *api.move.set_pair(MotorPair.AB),
+        move.set_pair(MotorPair.AB),
         sensor.reset_yaw(),
         f.call("FlashN", 3),
         f.call("DriveUntilBlocked", 2000),

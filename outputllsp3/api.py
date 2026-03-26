@@ -267,8 +267,22 @@ class WaitAPI:
     Use `wait.ms(...)` for SPIKE-style sleeps or `wait.seconds(...)` for direct control.
     """
     project: Any
-    def seconds(self, value: float) -> str: return self.project.wait(value)
-    def ms(self, value: int) -> str: return self.project.wait(value / 1000.0)
+    def seconds(self, value: Any) -> str:
+        """Emit a ``control_wait`` block.  *value* may be a float literal or
+        a block ID returned from an arithmetic expression builder."""
+        return self.project.wait(value)
+
+    def ms(self, value: Any) -> str:
+        """Emit a ``control_wait`` block for *value* milliseconds.
+
+        *value* may be an integer literal **or** a block ID (e.g. the result
+        of ``ops.mul(...)`` or a variable reporter).  Block IDs are converted
+        to seconds automatically via a ``/ 1000`` operator block; literals are
+        divided in Python at build time.
+        """
+        if isinstance(value, str) and value in self.project.blocks:
+            return self.project.wait(self.project.div(value, 1000))
+        return self.project.wait(float(value) / 1000.0)
 
     def sleep(self, value: float) -> str:
         warnings.warn("sleep() is deprecated; use seconds()", DeprecationWarning, stacklevel=2)

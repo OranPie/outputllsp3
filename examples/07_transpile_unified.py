@@ -1,92 +1,75 @@
-"""Unified transpile() entry-point demo.
+"""Unified transpile() entry-point demo — build-script version.
 
-This file shows how to call the new ``transpile()`` function instead of the
-six separate transpile_* functions.  It also demonstrates auto-mode detection
-and explicit mode selection.
+Demonstrates how all three transpile modes work through a single entry point.
+This file uses the build-script pattern so it can be compiled directly.
 
-Run this script directly (it's not itself a build script)::
+The three modes:
+  - ``build_script``  — ``def build(project, api, ns)`` entry point (this file)
+  - ``python_first``  — decorator-based style (robot.proc / run.main)
+  - ``auto``          — transpile() detects the mode automatically from source
 
-    python3 examples/07_transpile_unified.py
+Compile::
 
-It writes three .llsp3 files to /tmp using three different input styles.
+    outputllsp3 build examples/07_transpile_unified.py --out transpile_unified.llsp3
 """
-from pathlib import Path
-import tempfile, textwrap
+from outputllsp3 import MotorPair, Port
 
-# All three modes through one entry point
-from outputllsp3 import transpile
+def build(project, api, ns=None):
+    """Three-phase demo showing basic move → sense → react patterns."""
+    f = api.flow
+    v = api.vars
+    o = api.ops
+    sensor = api.sensor
+    move   = api.move
+    light  = api.light
+    wait   = api.wait
 
+    # Shared counter variable
+    v.add("phase", 0)
 
-def demo_auto_detect():
-    """transpile() with mode='auto' picks the right engine automatically."""
-    tmp = Path(tempfile.mkdtemp())
+    # --- Phase 1: Move forward 1 second ---
+    f.procedure("Phase1", [], [
+        v.set("phase", 1),
+        light.show_text("FWD"),
+        move.dual_speed(40, 40),
+        wait.seconds(1),
+        move.stop(),
+    ])
 
-    # Build-script source (has def build(...))
-    build_src = tmp / "build_demo.py"
-    build_src.write_text(textwrap.dedent("""\
-        from outputllsp3 import MotorPair
-        def build(project, api, ns=None):
-            api.flow.start(
-                api.move.set_pair(MotorPair.AB),
-                api.wait.seconds(0.5),
-                api.move.stop(),
-            )
-    """))
+    # --- Phase 2: Spin 90° using yaw ---
+    f.procedure("Phase2", [], [
+        v.set("phase", 2),
+        light.show_text("SPIN"),
+        sensor.reset_yaw(),
+        f.repeat_until(
+            o.gt(o.abs(sensor.yaw()), 85),
+            move.dual_speed(25, -25),
+            wait.ms(20),
+        ),
+        move.stop(),
+    ])
 
-    # Python-first source (has @run.main)
-    pf_src = tmp / "pf_demo.py"
-    pf_src.write_text(textwrap.dedent("""\
-        from outputllsp3 import robot, run, port
-        LEFT = port.A
-        RIGHT = port.B
+    # --- Phase 3: Flash result ---
+    f.procedure("Phase3", [], [
+        v.set("phase", 3),
+        light.show_image("HAPPY"),
+        wait.ms(500),
+        light.clear(),
+        wait.ms(250),
+        light.show_image("HAPPY"),
+        wait.ms(500),
+        light.clear(),
+    ])
 
-        @run.main
-        def main():
-            robot.use_pair(RIGHT, LEFT)
-            robot.forward_cm(20, 420)
-            robot.turn_deg(90, 260)
-    """))
-
-    from outputllsp3.workflow import discover_defaults
-    defaults = discover_defaults(Path("."))
-    if not defaults.get("template") or not defaults.get("strings"):
-        print("No ok.llsp3 / strings.json found in working tree — skipping file output.")
-        print("But transpile() is importable and mode detection works:")
-        from outputllsp3.transpiler import _detect_transpile_mode
-        print(f"  build_demo.py → {_detect_transpile_mode(build_src)}")  # build_script
-        print(f"  pf_demo.py    → {_detect_transpile_mode(pf_src)}")     # python_first
-        return
-
-    out_build = tmp / "out_build.llsp3"
-    out_pf    = tmp / "out_pf.llsp3"
-
-    transpile(build_src, out=out_build)  # auto → build_script
-    transpile(pf_src,    out=out_pf)     # auto → python_first
-
-    print(f"build_script output : {out_build} ({out_build.stat().st_size} bytes)")
-    print(f"python_first output : {out_pf}    ({out_pf.stat().st_size} bytes)")
-
-
-def demo_explicit_mode():
-    """Explicit mode='build_script' bypasses detection."""
-    from outputllsp3.transpiler import _detect_transpile_mode
-    from pathlib import Path
-    import tempfile, textwrap
-
-    tmp = Path(tempfile.mkdtemp())
-    # A file that looks like AST source but we force build_script
-    src = tmp / "hybrid.py"
-    src.write_text(textwrap.dedent("""\
-        def build(project, api, ns=None):
-            api.flow.start(api.wait.seconds(1))
-    """))
-    detected = _detect_transpile_mode(src)
-    print(f"Auto-detected mode for hybrid.py: {detected}")
-    # With mode='build_script' we'd call:
-    #   transpile(src, mode='build_script', out='hybrid.llsp3')
-    print("Explicit mode='build_script' would compile with build() entry point.")
-
-
-if __name__ == "__main__":
-    demo_auto_detect()
-    demo_explicit_mode()
+    # --- Main ---
+    f.start(
+        move.set_pair(MotorPair.AB),
+        sensor.reset_yaw(),
+        light.show_text("GO"),
+        wait.ms(500),
+        f.call("Phase1"),
+        wait.ms(200),
+        f.call("Phase2"),
+        wait.ms(200),
+        f.call("Phase3"),
+    )

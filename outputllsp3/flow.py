@@ -330,9 +330,31 @@ class FlowBuilder:
         return self.project.repeat_until(self.project.not_(condition), *self._flat(*body))
 
     def cond(self, condition: str, if_true: Any, if_false: Any) -> str:
-        """Inline conditional: generates an ``if_else`` block and returns its ID.
+        """Conditional STATEMENT: emit a SPIKE ``if-else`` block and return its ID.
 
-        Both ``if_true`` and ``if_false`` should be single block IDs (expressions).
-        The result ID can be used as an input to another block.
+        Both ``if_true`` and ``if_false`` **must** be block IDs returned by
+        block-building calls (e.g. ``move.stop()``, ``v.set("X", 1)``).
+        Raw literals (``int``, ``float``, etc.) are not valid Scratch statement
+        blocks and will raise a ``TypeError`` here.
+
+        The returned ID is a **statement** block (``control_if_else``); include
+        it in a body sequence, do **not** pass it as a numeric/boolean input to
+        another block.
+
+        For conditional *value* selection (like a ternary ``a if cond else b``),
+        Scratch has no inline reporter equivalent.  Use variables instead::
+
+            v.add("SPEED", 30)
+            # inside loop body:
+            f.cond(o.gt(sensor.yaw(), 5), v.set("SPEED", 20), v.set("SPEED", 50)),
+            move.forward_speed(v.get("SPEED")),
         """
+        for argname, val in (("if_true", if_true), ("if_false", if_false)):
+            if val is not None and not isinstance(val, str):
+                raise TypeError(
+                    f"cond(): '{argname}' must be a block ID (str), "
+                    f"got {type(val).__name__} {val!r}. "
+                    f"Use v.set(...), move.stop(), or another block-builder call "
+                    f"to create a block ID, or use variables for value selection."
+                )
         return self.project.if_else_block(condition, (if_true,), (if_false,))
