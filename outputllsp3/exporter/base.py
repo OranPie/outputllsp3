@@ -199,7 +199,9 @@ def _summary(doc) -> dict[str, Any]:
 
 
 def _sanitize(name: str, fallback: str = "v") -> str:
-    name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_") or fallback
+    # Allow Unicode letters/digits — Python 3 identifiers support them.
+    # Non-word characters (including ASCII punctuation) become underscores.
+    name = re.sub(r"[^\w]+", "_", name, flags=re.UNICODE).strip("_") or fallback
     if name[0].isdigit():
         name = "_" + name
     if keyword.iskeyword(name):
