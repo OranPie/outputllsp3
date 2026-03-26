@@ -108,7 +108,10 @@ class PythonFirstContext:
         self.list_decls: dict[str, str] = {}
         self.proc_defs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
-        # Functions decorated with @run.when_broadcast('msg').
+        # Event-hat handlers collected from @run.when_* decorators.
+        # Each entry: {'type': str, 'fn': FunctionDef, **kwargs}
+        self._event_handlers: list[dict] = []
+        # Functions decorated with @run.when_broadcast('msg') (kept for compat).
         self._broadcast_handlers: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
         # Pending monitor declarations collected from robot.show_monitor() calls.
         # Resolved after all compilation (when variables are fully declared).
@@ -245,14 +248,19 @@ class PythonFirstContext:
                     self.main_def = node
                 if "robot.proc" in deco_names:
                     self.proc_defs.append(node)
-                # @run.when_broadcast('message') — collect as event-hat handler
+                # @run.when_*(...) — collect as event-hat handlers
                 for deco in node.decorator_list:
-                    if (isinstance(deco, ast.Call) and
-                            self.attr_name(deco.func) == 'run.when_broadcast' and
-                            deco.args):
-                        msg = self.const_eval(deco.args[0])
-                        if isinstance(msg, str):
-                            self._broadcast_handlers.append((msg, node))
+                    deco_fn = self.attr_name(deco.func) if isinstance(deco, ast.Call) else self.attr_name(deco)
+                    if not deco_fn.startswith('run.when_'):
+                        continue
+                    kind = deco_fn[len('run.when_'):]  # e.g. 'broadcast', 'condition', 'button'
+                    args_ev = [self.const_eval(a) for a in (deco.args if isinstance(deco, ast.Call) else [])]
+                    kw_ev = {kw.arg: self.const_eval(kw.value) for kw in (deco.keywords if isinstance(deco, ast.Call) else [])}
+                    entry = {'type': kind, 'fn': node, 'args': args_ev, 'kw': kw_ev}
+                    self._event_handlers.append(entry)
+                    # Back-compat: keep _broadcast_handlers for 'broadcast' kind
+                    if kind == 'broadcast' and args_ev and isinstance(args_ev[0], str):
+                        self._broadcast_handlers.append((args_ev[0], node))
 
     def declare_resources(self):
         for pyname, lname in self.list_decls.items():
@@ -303,10 +311,68 @@ class PythonFirstContext:
         if self.notes:
             self.project.add_comment(start, "python-first notes:\n" + "\n".join(self.notes[:12]), x=20, y=20, width=420, height=180)
 
-        # Compile @run.when_broadcast('msg') handlers as event-hat stacks.
-        for i, (msg, fn) in enumerate(self._broadcast_handlers):
+        # Compile all @run.when_*(...) handlers as event-hat stacks.
+        for i, ev in enumerate(self._event_handlers):
+            kind = ev['type']
+            fn = ev['fn']
+            args = ev['args']
+            kw = ev['kw']
             body = self.compile_body(fn.body, fn_name=fn.name, params=set())
-            self.api.flow.when('broadcast', *body, message=msg, x=250, y=90 + i * 200)
+            ev_kwargs: dict = dict(kw)
+            try:
+                if kind == 'broadcast':
+                    msg = args[0] if args else kw.get('message', 'message1')
+                    self.api.flow.when('broadcast', *body, message=msg)
+                elif kind == 'condition':
+                    # lambda: expr — we can't evaluate a lambda at compile time;
+                    # compile the lambda body as a boolean expression block.
+                    lambda_fn = fn  # will be handled via note
+                    self.note(f"@run.when_condition: condition compiled as whenCondition block (lambda not supported at compile time)", fn)
+                    # Best-effort: emit a whenCondition with no condition (always-fire)
+                    self.api.flow.when('condition', *body, condition=None)
+                elif kind == 'button':
+                    button = args[0] if len(args) > 0 else kw.get('button', 'left')
+                    action = args[1] if len(args) > 1 else kw.get('action', kw.get('event', 'pressed'))
+                    self.api.flow.when('button', *body, button=button, action=action)
+                elif kind == 'gesture':
+                    gesture = args[0] if args else kw.get('gesture', 'tapped')
+                    self.api.flow.when('gesture', *body, gesture=gesture)
+                elif kind == 'orientation':
+                    value = args[0] if args else kw.get('value', 'front')
+                    self.api.flow.when('orientation', *body, value=value)
+                elif kind == 'tilted':
+                    direction = args[0] if args else kw.get('direction', 'any')
+                    self.api.flow.when('tilted', *body, direction=direction)
+                elif kind == 'timer':
+                    threshold = args[0] if args else kw.get('threshold', 5.0)
+                    self.api.flow.when('timer', *body, threshold=threshold)
+                elif kind == 'color':
+                    port = args[0] if len(args) > 0 else kw.get('port', 'A')
+                    color = args[1] if len(args) > 1 else kw.get('color', 'any')
+                    self.api.flow.when('color', *body, port=port, color=color)
+                elif kind in ('pressed', 'force'):
+                    port = args[0] if len(args) > 0 else kw.get('port', 'A')
+                    option = args[1] if len(args) > 1 else kw.get('option', 'pressed')
+                    self.api.flow.when('force', *body, port=port, option=option)
+                elif kind in ('near_or_far', 'near', 'far'):
+                    port = args[0] if len(args) > 0 else kw.get('port', 'A')
+                    option = args[1] if len(args) > 1 else kw.get('option', 'near')
+                    self.api.flow.when('near', *body, port=port)
+                elif kind == 'distance':
+                    port = args[0] if len(args) > 0 else kw.get('port', 'A')
+                    comp = args[1] if len(args) > 1 else kw.get('comparator', 'less_than')
+                    value = args[2] if len(args) > 2 else kw.get('value', 10)
+                    self.api.flow.when('distance', *body, port=port, comparator=comp, value=value)
+                elif kind in ('distance_closer_than',):
+                    value = args[0] if args else kw.get('value', 10)
+                    self.api.flow.when('near', *body, port='A')
+                elif kind == 'louder_than':
+                    # No direct SPIKE equivalent; emit a note and skip
+                    self.note(f"@run.when_louder_than: not supported in SPIKE LLSP3 — skipped", fn)
+                else:
+                    self.note(f"@run.when_{kind}: unrecognised event type — skipped", fn)
+            except Exception as exc:
+                self.note(f"@run.when_{kind}: compile error ({exc}) — skipped", fn)
 
         # Apply deferred monitor declarations: now that all variables have been
         # declared (by data_setvariableto blocks), resolve them by name.

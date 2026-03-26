@@ -55,12 +55,53 @@ class _RunModule:
         fn.__outputllsp3_main__ = True
         return fn
 
-    def when_broadcast(self, message: str):
-        """Decorator stub — marks a function as a broadcast-receive handler."""
+    def _event_decorator(self, kind: str, **kwargs):
+        """Generic stub for @run.when_*(…) decorators."""
         def decorator(fn):
-            fn.__outputllsp3_when_broadcast__ = message
+            fn.__outputllsp3_event__ = kind
+            fn.__outputllsp3_event_kwargs__ = kwargs
             return fn
         return decorator
+
+    def when_broadcast(self, message: str):
+        return self._event_decorator('broadcast', message=message)
+
+    def when_condition(self, condition):
+        """Decorator stub — marks a function as a whenCondition handler."""
+        return self._event_decorator('condition', condition=condition)
+
+    def when_button(self, button: str = 'left', action: str = 'pressed'):
+        return self._event_decorator('button', button=button, action=action)
+
+    def when_gesture(self, gesture: str = 'tapped'):
+        return self._event_decorator('gesture', gesture=gesture)
+
+    def when_orientation(self, value: str = 'front'):
+        return self._event_decorator('orientation', value=value)
+
+    def when_tilted(self, direction: str = 'any'):
+        return self._event_decorator('tilted', direction=direction)
+
+    def when_timer(self, threshold: float = 5.0):
+        return self._event_decorator('timer', threshold=threshold)
+
+    def when_color(self, port, color: str = 'any'):
+        return self._event_decorator('color', port=port, color=color)
+
+    def when_pressed(self, port, option: str = 'pressed'):
+        return self._event_decorator('pressed', port=port, option=option)
+
+    def when_near_or_far(self, port, option: str = 'near'):
+        return self._event_decorator('near_or_far', port=port, option=option)
+
+    def when_distance(self, port, comparator: str = 'less_than', value: float = 10):
+        return self._event_decorator('distance', port=port, comparator=comparator, value=value)
+
+    def when_distance_closer_than(self, value: float = 10):
+        return self._event_decorator('distance_closer_than', value=value)
+
+    def when_louder_than(self, value: float = 50):
+        return self._event_decorator('louder_than', value=value)
 
     def broadcast(self, message: str): return None
     def broadcast_and_wait(self, message: str): return None
