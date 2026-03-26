@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import shutil
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -149,12 +151,22 @@ class ProjectSerializer:
         if errs:
             raise ValueError("Validation failed:\n" + "\n".join(errs[:50]))
         self._normalize_asset_hashes()
-        self._p.project_json["extensions"] = sorted({
+
+        # --- project.json extensions: auto-detected from opcodes used --------
+        extensions = sorted({
             b["opcode"].split("_", 1)[0]
             for b in self._p.blocks.values()
             if "_" in b["opcode"]
             and b["opcode"].split("_", 1)[0] not in BlockManager.BUILTIN_EXTENSION_PREFIXES
         })
+        self._p.project_json["extensions"] = extensions
+
+        out_path = Path(out_path)
+        project_name = out_path.stem
+
+        # --- sprite name matches output filename -----------------------------
+        self._p.sprite["name"] = project_name
+
         (self._p.inner_dir / "project.json").write_text(
             json.dumps(self._p.project_json, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
@@ -163,9 +175,17 @@ class ProjectSerializer:
         with zipfile.ZipFile(scratch_sb3, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in sorted(self._p.inner_dir.iterdir(), key=lambda p: p.name):
                 zf.write(item, arcname=item.name)
-        out_path = Path(out_path)
-        self._p.manifest["name"] = out_path.stem
+
+        # --- manifest: fresh timestamps, unique ID, synced extensions --------
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
+                  f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+        self._p.manifest["name"] = project_name
+        self._p.manifest["id"] = secrets.token_urlsafe(9)   # unique per save
+        self._p.manifest["created"] = now_iso
+        self._p.manifest["lastsaved"] = now_iso
         self._p.manifest["size"] = scratch_sb3.stat().st_size
+        self._p.manifest["extensions"] = extensions         # sync with project.json
+
         (self._p.outer_dir / "manifest.json").write_text(
             json.dumps(self._p.manifest, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
