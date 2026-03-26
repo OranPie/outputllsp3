@@ -105,6 +105,18 @@ class _RobotModule:
     def reflectivity(self, port: Any):
         raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
 
+    def button_pressed(self, button: str = "center"):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    def button_released(self, button: str = "center"):
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    def show_monitor(self, name: str, *, visible: bool = True,
+                     slider_min: Any = None, slider_max: Any = None,
+                     discrete: bool = True) -> None:
+        """Stub — mark a variable as visible in the SPIKE App monitor panel."""
+        return None
+
 
 class _PortModule:
     A = _PortEnum.A.value

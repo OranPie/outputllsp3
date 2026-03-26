@@ -167,6 +167,30 @@ class ProjectSerializer:
         # --- sprite name matches output filename -----------------------------
         self._p.sprite["name"] = project_name
 
+        # --- populate monitors from declared show_monitor() calls ------------
+        sprite_name = project_name
+        monitors: list[dict] = []
+        for vid, cfg in self._p._monitors.items():
+            pair = self._p.variables.get(vid, ['var', 0])
+            display_name = pair[0]
+            monitors.append({
+                'id': vid,
+                'mode': cfg.get('mode', 'default'),
+                'opcode': 'data_variable',
+                'params': {'VARIABLE': display_name},
+                'spriteName': sprite_name,
+                'value': pair[1],
+                'width': 0,
+                'height': 0,
+                'x': None,
+                'y': None,
+                'visible': cfg.get('visible', True),
+                'sliderMin': cfg.get('slider_min', 0),
+                'sliderMax': cfg.get('slider_max', 100),
+                'isDiscrete': cfg.get('discrete', True),
+            })
+        self._p.project_json['monitors'] = monitors
+
         (self._p.inner_dir / "project.json").write_text(
             json.dumps(self._p.project_json, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",

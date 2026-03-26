@@ -477,9 +477,12 @@ class _PFExport:
             orientation = self._menu_value(block.get('inputs', {}).get('ORIENTATION')) or 'upright'
             return f'robot.is_orientation({orientation!r})'
         if op == 'flippersensors_buttonIsPressed':
-            button = self._menu_value(block.get('inputs', {}).get('BUTTON')) or 'center'
-            event = self._menu_value(block.get('inputs', {}).get('EVENT')) or 'pressed'
-            return f'robot.button({button!r}) == {event!r}'
+            # BUTTON and EVENT are fields, not inputs, in real SPIKE app projects.
+            button = block.get('fields', {}).get('BUTTON', ['center'])[0]
+            event = block.get('fields', {}).get('EVENT', ['pressed'])[0]
+            if event == 'released':
+                return f'robot.button_released({button!r})'
+            return f'robot.button_pressed({button!r})'
         if op == 'flippersensors_distance':
             port_name = self._port_name(block.get('inputs', {}).get('PORT'))
             unit = self._menu_value(block.get('inputs', {}).get('UNIT')) or 'cm'
@@ -1430,6 +1433,27 @@ class _PFExport:
                 val = pair[1]
                 lit = self._var_lit(val)
                 out.append(f'{name} = {lit}')
+            out.append('')
+
+        # Monitors section — variables visible in the SPIKE App monitor panel
+        all_monitors = self.doc.project.get('monitors', [])
+        visible_monitors = [m for m in all_monitors if m.get('visible') and m.get('opcode') == 'data_variable']
+        if visible_monitors:
+            out.append(_section('Monitors'))
+            for m in visible_monitors:
+                # Resolve to clean Python name via var_names if possible
+                var_id = m.get('id', '')
+                raw_name = m.get('params', {}).get('VARIABLE', '')
+                py_name = self.var_names.get(var_id) or self._clean_name(raw_name, 'var')
+                mode = m.get('mode', 'default')
+                if mode == 'slider':
+                    smin = m.get('sliderMin', 0)
+                    smax = m.get('sliderMax', 100)
+                    disc = m.get('isDiscrete', True)
+                    disc_arg = '' if disc else ', discrete=False'
+                    out.append(f'robot.show_monitor({py_name!r}, slider_min={smin}, slider_max={smax}{disc_arg})')
+                else:
+                    out.append(f'robot.show_monitor({py_name!r})')
             out.append('')
 
         # Lists section — use clean (namespace-stripped) names

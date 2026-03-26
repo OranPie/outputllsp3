@@ -108,6 +108,9 @@ class PythonFirstContext:
         self.list_decls: dict[str, str] = {}
         self.proc_defs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        # Pending monitor declarations collected from robot.show_monitor() calls.
+        # Resolved after all compilation (when variables are fully declared).
+        self._monitor_decls: list[dict] = []
         # Maps proc name → ReturnContext for procs that use ``return value``.
         self.proc_return_vars: dict[str, ReturnContext] = {}
         # Maps proc name → ordered list of param names.
@@ -219,6 +222,21 @@ class PythonFirstContext:
                 if value is not None:
                     self.const_env[tname] = value
                     continue
+            # Collect robot.show_monitor() calls at module level for deferred registration.
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                fname = self.attr_name(node.value.func)
+                if fname == 'robot.show_monitor' and node.value.args:
+                    vname = self.const_eval(node.value.args[0])
+                    if isinstance(vname, str):
+                        kw = {kw.arg: self.const_eval(kw.value) for kw in node.value.keywords}
+                        self._monitor_decls.append({
+                            'name': vname,
+                            'visible': kw.get('visible', True),
+                            'slider_min': kw.get('slider_min', None),
+                            'slider_max': kw.get('slider_max', None),
+                            'discrete': kw.get('discrete', True),
+                        })
+                        continue
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 deco_names = [self.attr_name(d) for d in node.decorator_list]
                 if "run.main" in deco_names:
@@ -274,6 +292,20 @@ class PythonFirstContext:
         self.api.flow.chain(start, *main_body)
         if self.notes:
             self.project.add_comment(start, "python-first notes:\n" + "\n".join(self.notes[:12]), x=20, y=20, width=420, height=180)
+
+        # Apply deferred monitor declarations: now that all variables have been
+        # declared (by data_setvariableto blocks), resolve them by name.
+        for decl in self._monitor_decls:
+            try:
+                self.api.vars.show_monitor(
+                    decl['name'],
+                    visible=decl.get('visible', True),
+                    slider_min=decl.get('slider_min'),
+                    slider_max=decl.get('slider_max'),
+                    discrete=decl.get('discrete', True),
+                )
+            except KeyError:
+                pass  # variable never used in code — skip
 
     # ---------- constants ----------
 
@@ -417,6 +449,9 @@ class PythonFirstContext:
             if fname == 'robot.button_pressed':
                 button = self.compile_expr(expr.args[0], fn_name, params) if expr.args else 'center'
                 return self.api.sensor.button_pressed(button)
+            if fname == 'robot.button_released':
+                button = self.compile_expr(expr.args[0], fn_name, params) if expr.args else 'center'
+                return self.api.sensor.button_released(button)
             # motor reporters
             if fname == 'robot.motor_absolute_position' and expr.args:
                 port = self.compile_expr(expr.args[0], fn_name, params)
@@ -996,6 +1031,26 @@ class PythonFirstContext:
             return self.api.sound.stop()
         if name == 'robot.reset_yaw':
             return self.api.sensor.reset_yaw()
+        if name == 'robot.show_monitor':
+            # Metadata-only: marks a variable as visible in the SPIKE monitor panel.
+            # Resolves keyword args from the AST call if present.
+            if not args:
+                return None  # no var name given — silently skip
+            var_name_val = self.const_eval(call.args[0]) if call.args else None
+            if not isinstance(var_name_val, str):
+                return None
+            kw = {kw.arg: self.const_eval(kw.value) for kw in call.keywords}
+            visible = kw.get('visible', True)
+            slider_min = kw.get('slider_min', None)
+            slider_max = kw.get('slider_max', None)
+            discrete = kw.get('discrete', True)
+            try:
+                self.api.vars.show_monitor(var_name_val, visible=visible,
+                                           slider_min=slider_min, slider_max=slider_max,
+                                           discrete=discrete)
+            except KeyError:
+                pass  # variable not yet declared — silently skip
+            return None  # no block generated
         if name == 'robot.run_motor':
             return self.api.motor.run(args[0] if args else 'A', args[1] if len(args) > 1 else 500)
         if name == 'robot.run_motor_power':

@@ -68,6 +68,7 @@ class LLSP3Project:
         self.inner_dir.mkdir(parents=True, exist_ok=True)
         self._counter = 0
         self._proc_meta: dict[str, dict[str, Any]] = {}
+        self._monitors: dict[str, dict[str, Any]] = {}  # var_id → monitor config
         self.default_namespace: str = ""
         self.function_namespace_mode: bool = False
         self.strict_verified: bool = False
@@ -118,6 +119,7 @@ class LLSP3Project:
         self.sprite["broadcasts"] = OrderedDict()
         self.sprite["comments"] = OrderedDict()
         self.project_json["monitors"] = []
+        self._monitors.clear()
         self._proc_meta.clear()
 
     def set_strict_verified(self, enabled: bool = True) -> None:
@@ -232,6 +234,7 @@ class LLSP3Project:
     def variable(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.variable(name, namespace=namespace, raw=raw)
     def set_variable(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.set_variable(name, value, namespace=namespace, raw=raw)
     def change_variable(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.change_variable(name, value, namespace=namespace, raw=raw)
+    def show_monitor(self, name: str, *, visible: bool = True, slider_min: Any = None, slider_max: Any = None, discrete: bool = True, namespace: str | None = None, raw: bool = False) -> None: return self._vars.show_monitor(name, visible=visible, slider_min=slider_min, slider_max=slider_max, discrete=discrete, namespace=namespace, raw=raw)
     def add_list(self, name: str, value: list[Any] | None = None, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.add_list(name, value, namespace=namespace, raw=raw)
     def list_id(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.list_id(name, namespace=namespace, raw=raw)
     def list_name(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str: return self._vars.list_name(name, namespace=namespace, raw=raw)

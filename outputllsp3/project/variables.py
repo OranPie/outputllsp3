@@ -43,6 +43,51 @@ class VariableManager:
         self._p.variables[vid] = [qname, value]
         return vid
 
+    def show_monitor(self, name: str, *, visible: bool = True,
+                     slider_min: float | None = None, slider_max: float | None = None,
+                     discrete: bool = True, namespace: str | None = None, raw: bool = False) -> None:
+        """Mark a variable as visible (or configure its monitor) in the SPIKE App.
+
+        Args:
+            name:        Variable name (must already be declared via ``add_variable``).
+            visible:     Whether the monitor is shown on the hub panel.
+            slider_min:  If set, enables slider mode with this minimum value.
+            slider_max:  If set, enables slider mode with this maximum value.
+            discrete:    Whether the slider snaps to integer values (default: True).
+
+        If ``name`` is not found as an exact qualified name, falls back to
+        matching any variable whose display name ends with ``__<name>`` (i.e.
+        a namespace-prefixed version created by the python-first compiler).
+        All matching variables are registered as monitors.
+        """
+        mode = 'slider' if slider_min is not None or slider_max is not None else 'default'
+        cfg = {
+            'visible': visible,
+            'mode': mode,
+            'slider_min': slider_min if slider_min is not None else 0,
+            'slider_max': slider_max if slider_max is not None else 100,
+            'discrete': discrete,
+        }
+        # Try exact match first.
+        try:
+            vid = self.variable_id(name, namespace=namespace, raw=raw)
+            self._p._monitors[vid] = cfg
+            return
+        except KeyError:
+            pass
+        # Fallback: match variables whose qname ends with `__<name>` (python-first
+        # compiler namespace prefix) or equals `name` case-insensitively.
+        suffix = f'__{name}'
+        matched = []
+        for vid, (qn, _) in self._p.variables.items():
+            if qn == name or qn.endswith(suffix):
+                matched.append(vid)
+        if matched:
+            for vid in matched:
+                self._p._monitors[vid] = cfg
+        else:
+            raise KeyError(name)
+
     def variable_id(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str:
         qname = self.qualify_var_name(name, namespace=namespace, raw=raw)
         for vid, (n, _) in self._p.variables.items():

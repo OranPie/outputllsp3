@@ -64,6 +64,9 @@ class VarsAPI:
     def get(self, name: str, *, namespace: str | None = None, raw: bool = False) -> str: return self.project.variable(name, namespace=namespace, raw=raw)
     def set(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str: return self.project.set_variable(name, value, namespace=namespace, raw=raw)
     def change(self, name: str, value: Any, *, namespace: str | None = None, raw: bool = False) -> str: return self.project.change_variable(name, value, namespace=namespace, raw=raw)
+    def show_monitor(self, name: str, *, visible: bool = True, slider_min: Any = None, slider_max: Any = None, discrete: bool = True, namespace: str | None = None, raw: bool = False) -> None:
+        """Mark a variable as visible in the SPIKE App monitor panel (no block generated)."""
+        return self.project.show_monitor(name, visible=visible, slider_min=slider_min, slider_max=slider_max, discrete=discrete, namespace=namespace, raw=raw)
 
 
 @dataclass
@@ -220,6 +223,7 @@ class SensorAPI:
     def reset_timer(self) -> str: return self._w().flippersensors.reset_timer()
     def loudness(self) -> str: return self._w().flippersensors.loudness()
     def button_pressed(self, button: str = "center") -> str: return self._w().flippersensors.button_is_pressed(BUTTON=button, EVENT="pressed")
+    def button_released(self, button: str = "center") -> str: return self._w().flippersensors.button_is_pressed(BUTTON=button, EVENT="released")
     def color(self, port: Any) -> str: return self._w().flippersensors.color(PORT=str(port))
     def is_color(self, port: Any, value: Any) -> str: return self._w().flippersensors.is_color(PORT=str(port), VALUE=value)
     def distance(self, port: Any) -> str: return self._w().flippersensors.distance(PORT=str(port))
