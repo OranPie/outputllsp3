@@ -55,6 +55,15 @@ class _RunModule:
         fn.__outputllsp3_main__ = True
         return fn
 
+    def when_broadcast(self, message: str):
+        """Decorator stub — marks a function as a broadcast-receive handler."""
+        def decorator(fn):
+            fn.__outputllsp3_when_broadcast__ = message
+            return fn
+        return decorator
+
+    def broadcast(self, message: str): return None
+    def broadcast_and_wait(self, message: str): return None
     def sleep_ms(self, ms: int): return None
     def sleep(self, seconds: float): return None
 

@@ -6,11 +6,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from ..locale import t
+
 if TYPE_CHECKING:
     from . import LLSP3Project
+
+logger = logging.getLogger(__name__)
 
 
 class ProcedureManager:
@@ -21,6 +26,7 @@ class ProcedureManager:
         self, name: str, args: list[str], *, x: int, y: int,
         defaults: list[Any] | None = None,
     ) -> str:
+        logger.debug(t("proc.define", name=name, arg_count=len(args)))
         defid = self._p._id("def")
         argids = [self._p._id("arg") for _ in args]
         protoid = self._p._id("proto")
@@ -78,6 +84,7 @@ class ProcedureManager:
         return defid
 
     def call_procedure(self, name: str, args: list[Any] | tuple[Any, ...] = ()) -> str:
+        logger.debug(t("proc.call", name=name))
         meta = self._p._proc_meta[name]
         argids = meta["argids"]
         stored_defaults = meta.get("defaults", [""] * len(argids))
@@ -108,6 +115,7 @@ class ProcedureManager:
         )
 
     def attach_procedure_body(self, name: str, *block_ids: str) -> str | None:
+        logger.debug(t("proc.attach", name=name, block_count=len(block_ids)))
         target_code = self._p._proc_meta[name]["proccode"]
         defid = None
         for bid, block in self._p.blocks.items():

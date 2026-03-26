@@ -108,6 +108,8 @@ class PythonFirstContext:
         self.list_decls: dict[str, str] = {}
         self.proc_defs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        # Functions decorated with @run.when_broadcast('msg').
+        self._broadcast_handlers: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
         # Pending monitor declarations collected from robot.show_monitor() calls.
         # Resolved after all compilation (when variables are fully declared).
         self._monitor_decls: list[dict] = []
@@ -243,6 +245,14 @@ class PythonFirstContext:
                     self.main_def = node
                 if "robot.proc" in deco_names:
                     self.proc_defs.append(node)
+                # @run.when_broadcast('message') — collect as event-hat handler
+                for deco in node.decorator_list:
+                    if (isinstance(deco, ast.Call) and
+                            self.attr_name(deco.func) == 'run.when_broadcast' and
+                            deco.args):
+                        msg = self.const_eval(deco.args[0])
+                        if isinstance(msg, str):
+                            self._broadcast_handlers.append((msg, node))
 
     def declare_resources(self):
         for pyname, lname in self.list_decls.items():
@@ -292,6 +302,11 @@ class PythonFirstContext:
         self.api.flow.chain(start, *main_body)
         if self.notes:
             self.project.add_comment(start, "python-first notes:\n" + "\n".join(self.notes[:12]), x=20, y=20, width=420, height=180)
+
+        # Compile @run.when_broadcast('msg') handlers as event-hat stacks.
+        for i, (msg, fn) in enumerate(self._broadcast_handlers):
+            body = self.compile_body(fn.body, fn_name=fn.name, params=set())
+            self.api.flow.when('broadcast', *body, message=msg, x=250, y=90 + i * 200)
 
         # Apply deferred monitor declarations: now that all variables have been
         # declared (by data_setvariableto blocks), resolve them by name.
@@ -974,6 +989,18 @@ class PythonFirstContext:
         if name == 'run.sleep':
             secs = self.compile_expr(call.args[0], fn_name, params) if call.args else 0
             return self.api.wait.seconds(float(secs) if isinstance(secs, (int, float)) else 0)
+        if name == 'run.broadcast':
+            msg = self.const_eval(call.args[0]) if call.args else ''
+            if isinstance(msg, str) and msg:
+                return self.api.flow.broadcast(msg)
+            self.note(f"run.broadcast: non-constant message — skipped", call)
+            return None
+        if name == 'run.broadcast_and_wait':
+            msg = self.const_eval(call.args[0]) if call.args else ''
+            if isinstance(msg, str) and msg:
+                return self.api.flow.broadcast_and_wait(msg)
+            self.note(f"run.broadcast_and_wait: non-constant message — skipped", call)
+            return None
 
         if name == 'robot.use_pair' and len(args) >= 2:
             pair = f"{args[0]}{args[1]}"

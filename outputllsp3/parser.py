@@ -19,11 +19,16 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
+
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,13 +131,17 @@ def parse_llsp3(path: str | Path) -> LLSP3Document:
     if not path.exists():
         raise FileNotFoundError(f"LLSP3 file not found: {path}")
     path_str = str(path)
+    logger.debug(t("parser.start", path=path_str))
     try:
+        logger.debug(t("parser.open", path=path_str))
         with zipfile.ZipFile(path_str, "r") as outer:
             if "manifest.json" not in outer.namelist():
                 raise KeyError(f"manifest.json not found in {path.name}")
+            logger.debug(t("parser.manifest", path=path.name))
             manifest = json.loads(outer.read("manifest.json").decode("utf-8"))
             if "scratch.sb3" not in outer.namelist():
                 raise KeyError(f"scratch.sb3 not found in {path.name}")
+            logger.debug(t("parser.scratch", path=path.name))
             scratch_sb3 = outer.read("scratch.sb3")
     except zipfile.BadZipFile as exc:
         raise zipfile.BadZipFile(f"Not a valid LLSP3 archive: {path.name}") from exc
@@ -140,7 +149,12 @@ def parse_llsp3(path: str | Path) -> LLSP3Document:
         with zipfile.ZipFile(io.BytesIO(scratch_sb3), "r") as inner:
             if "project.json" not in inner.namelist():
                 raise KeyError(f"project.json not found inside scratch.sb3 in {path.name}")
+            logger.debug(t("parser.project"))
             project = json.loads(inner.read("project.json").decode("utf-8"))
     except zipfile.BadZipFile as exc:
         raise zipfile.BadZipFile(f"scratch.sb3 inside {path.name} is not a valid zip") from exc
-    return LLSP3Document(path=path_str, manifest=manifest, project=project)
+    doc = LLSP3Document(path=path_str, manifest=manifest, project=project)
+    s = doc.summary()
+    logger.info(t("parser.done", path=path_str, block_count=s["block_count"],
+                  var_count=s["variable_count"], proc_count=s["procedure_count"]))
+    return doc

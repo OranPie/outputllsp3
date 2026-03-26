@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import shutil
 import zipfile
@@ -15,9 +16,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .blocks import BlockManager
+from ..locale import t
 
 if TYPE_CHECKING:
     from . import LLSP3Project
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectSerializer:
@@ -27,6 +31,7 @@ class ProjectSerializer:
     # -- template unpacking -----------------------------------------------
 
     def unpack(self, template_llsp3: Path) -> None:
+        logger.debug(t("ser.unpack", template=str(template_llsp3)))
         with zipfile.ZipFile(template_llsp3, "r") as zf:
             zf.extractall(self._p.outer_dir)
         with zipfile.ZipFile(self._p.outer_dir / "scratch.sb3", "r") as zf:
@@ -49,6 +54,7 @@ class ProjectSerializer:
     # -- asset normalisation ---------------------------------------------
 
     def _normalize_asset_hashes(self) -> None:
+        logger.debug(t("ser.normalize_assets"))
         asset_fields = ("costumes", "sounds")
         rename_map: dict[str, tuple[str, str]] = {}
         for target in self._p.project_json.get("targets", []):
@@ -147,6 +153,7 @@ class ProjectSerializer:
     # -- save -------------------------------------------------------------
 
     def save(self, out_path: str | Path) -> Path:
+        logger.debug(t("ser.save", out=str(out_path)))
         errs = self.validate()
         if errs:
             raise ValueError("Validation failed:\n" + "\n".join(errs[:50]))
@@ -217,4 +224,5 @@ class ProjectSerializer:
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for name in ["manifest.json", "icon.svg", "scratch.sb3"]:
                 zf.write(self._p.outer_dir / name, arcname=name)
+        logger.info(t("ser.done", out=str(out_path)))
         return out_path

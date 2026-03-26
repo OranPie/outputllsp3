@@ -17,12 +17,16 @@ Public API
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from pathlib import Path
 from importlib import resources
 import zipfile
 
 from .metadata import package_info, CHANGELOG
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 def _resource_path(name: str) -> Path:
@@ -40,6 +44,7 @@ def bundled_paths() -> dict[str, Path]:
 
 def discover_defaults(base: str | Path = '.') -> dict[str, Path]:
     base = Path(base).resolve()
+    logger.debug(t("workflow.discover", base=str(base)))
     candidates = [base, *base.parents]
     def find(*names: str):
         for d in candidates:
@@ -62,6 +67,7 @@ def discover_defaults(base: str | Path = '.') -> dict[str, Path]:
 
 def doctor_report(base: str | Path = '.') -> dict:
     base = Path(base)
+    logger.debug(t("workflow.doctor", base=str(base)))
     found = discover_defaults(base)
     package_dirs = [p for p in [base, *base.iterdir()] if p.is_dir()] if base.exists() and base.is_dir() else []
     build_candidates = []
@@ -103,6 +109,7 @@ def docs_index() -> dict:
 
 def init_workspace(target_dir: str | Path, package_name: str = 'robot_pkg', *, include_resources: bool = True) -> Path:
     target_dir = Path(target_dir)
+    logger.debug(t("workflow.init", target=str(target_dir)))
     pkg = target_dir / package_name
     missions = pkg / 'missions'
     missions.mkdir(parents=True, exist_ok=True)
@@ -154,6 +161,7 @@ def init_workspace(target_dir: str | Path, package_name: str = 'robot_pkg', *, i
 def roundtrip_llsp3(in_path: str | Path, out_path: str | Path) -> Path:
     in_path = Path(in_path)
     out_path = Path(out_path)
+    logger.debug(t("workflow.roundtrip", in_path=str(in_path), out_path=str(out_path)))
     with zipfile.ZipFile(in_path, 'r') as zf:
         files = {name: zf.read(name) for name in zf.namelist()}
     with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zf:

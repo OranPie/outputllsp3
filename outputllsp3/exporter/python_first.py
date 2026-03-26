@@ -8,9 +8,13 @@ low-level block detail, but produces readable programs.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from .base import _sanitize, _extract_literal, _value_ref
+from ..locale import t
+
+logger = logging.getLogger(__name__)
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
@@ -188,6 +192,7 @@ class _PFExport:
             lid: self._clean_name(pair[0], 'lst')
             for lid, pair in doc.sprite.get('lists', {}).items()
         }
+        logger.debug(t("pf_exp.init", block_count=len(self.blocks), var_count=len(self.var_names)))
         self.proc_defs = self._collect_procedures()
         # Tracking flags — populated during render pass 1
         self._needs_math: bool = False
@@ -343,6 +348,7 @@ class _PFExport:
                 name_seen[n] = name_seen.get(n, 0) + 1
                 if name_seen[n] > 1:
                     p['name'] = f'{n}_{name_seen[n]}'
+        logger.debug(t("pf_exp.collect_procs", count=len(procs)))
         return procs
 
     def render_expr(self, ref):
@@ -1209,6 +1215,7 @@ class _PFExport:
         return None
 
     def render(self):
+        logger.debug(t("pf_exp.render"))
         # ── Pass 1: render all bodies (populates _needs_math/_unknown_*) ──────
         proc_chunks: list[list[str]] = []
         for proc in self.proc_defs:
@@ -1516,6 +1523,7 @@ class _PFExport:
                 out.append('#   expressions: ' + ', '.join(sorted(self._unknown_exprs)))
             out.append('')
 
+        logger.info(t("pf_exp.done", proc_count=len(proc_chunks), event_count=len(event_chunks)))
         return out
 
 

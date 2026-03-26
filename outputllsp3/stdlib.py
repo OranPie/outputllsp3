@@ -75,10 +75,15 @@ to ``1`` from another hat (e.g. a button-press event handler)::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+from .locale import t
 
 if TYPE_CHECKING:
     from .api import API
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "install_math",
@@ -128,8 +133,8 @@ def install_math(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
 
     Returns a mapping of procedure names → definition block IDs.
     """
+    logger.debug(t("stdlib.install", group="math"))
     V, O, F, P = api.vars, api.ops, api.flow, api.project
-
     V.add("MATH_CLAMP",    0, namespace=ns)
     V.add("MATH_MAP",      0, namespace=ns)
     V.add("MATH_SIGN",     0, namespace=ns)
@@ -256,9 +261,9 @@ def install_timing(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
 
     Returns a mapping of procedure names → definition block IDs.
     """
+    logger.debug(t("stdlib.install", group="timing"))
     V, O, F, W, P = api.vars, api.ops, api.flow, api.wait, api.project
-
-    V.add("WAIT_DONE", 0, namespace=ns)
+    V.add("WAIT_DONE",    0, namespace=ns)
     V.add("WAIT_ELAPSED", 0, namespace=ns)
 
     done_var    = V.get("WAIT_DONE", namespace=ns)
@@ -301,9 +306,9 @@ def install_display(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
 
     Returns a mapping of procedure names → definition block IDs.
     """
+    logger.debug(t("stdlib.install", group="display"))
     V, O, F, L, W, P = api.vars, api.ops, api.flow, api.light, api.wait, api.project
-
-    V.add("DISP_I", 0, namespace=ns)
+    V.add("DISP_I",  0, namespace=ns)
     V.add("BLINK_I", 0, namespace=ns)
 
     # -- Countdown(n) ---------------------------------------------------
@@ -357,8 +362,8 @@ def install_sensors(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
 
     Returns a mapping of procedure names → definition block IDs.
     """
+    logger.debug(t("stdlib.install", group="sensors"))
     V, O, F, S, P = api.vars, api.ops, api.flow, api.sensor, api.project
-
     V.add("SENSOR_YAW", 0, namespace=ns)
     V.add("SENSOR_I",   0, namespace=ns)
 

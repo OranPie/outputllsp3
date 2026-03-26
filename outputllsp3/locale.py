@@ -56,6 +56,52 @@ _CATALOGS: dict[str, dict[str, str]] = {
         # CLI
         "cli.ok_wrote": "[OK] wrote {path}",
         "cli.ok_init": "[OK] initialized {path}",
+        # parser
+        "parser.start": "Parsing {path}",
+        "parser.open": "Opening outer zip {path}",
+        "parser.manifest": "Read manifest.json from {path}",
+        "parser.scratch": "Read scratch.sb3 from {path}",
+        "parser.project": "Read project.json",
+        "parser.done": "Parsed {path}: {block_count} blocks, {var_count} vars, {proc_count} procedures",
+        # serializer
+        "ser.unpack": "Unpacking template {template}",
+        "ser.normalize_assets": "Normalizing asset hashes",
+        "ser.save": "Saving project to {out}",
+        "ser.done": "Saved project to {out}",
+        # procedures
+        "proc.define": "Defining procedure {name} ({arg_count} args)",
+        "proc.call": "Calling procedure {name}",
+        "proc.attach": "Attaching body to procedure {name} ({block_count} blocks)",
+        # variables
+        "var.add": "Adding variable {name}",
+        "var.monitor": "Registering monitor for {name}",
+        # blocks
+        "block.add": "add_block {opcode} → {bid}",
+        "block.chain": "Chaining {count} blocks under {container}",
+        # python_first exporter
+        "pf_exp.init": "PythonFirstExporter: {block_count} blocks, {var_count} vars",
+        "pf_exp.collect_procs": "Collected {count} procedure definitions",
+        "pf_exp.render": "Rendering python-first export",
+        "pf_exp.done": "Python-first render: {proc_count} procs, {event_count} events",
+        # stdlib
+        "stdlib.install": "Installing stdlib group {group}",
+        # workflow
+        "workflow.discover": "Discovering defaults from {base}",
+        "workflow.init": "Initializing workspace at {target}",
+        "workflow.doctor": "Running doctor on {base}",
+        "workflow.roundtrip": "Roundtrip {in_path} → {out_path}",
+        # flow
+        "flow.start": "FlowBuilder.start()",
+        "flow.procedure": "FlowBuilder.procedure {name} ({arg_count} args)",
+        "flow.chain": "FlowBuilder.chain under {parent}",
+        # project
+        "project.init": "LLSP3Project init: template={template}",
+        "project.save": "Saving project to {out}",
+        "project.clear": "Clearing project code",
+        # layout
+        "layout.start": "next_start → ({x}, {y})",
+        "layout.event": "next_event → ({x}, {y})",
+        "layout.proc": "next_procedure → ({x}, {y})",
     },
     "zh_CN": {
         # transpiler logging
@@ -92,6 +138,52 @@ _CATALOGS: dict[str, dict[str, str]] = {
         # CLI
         "cli.ok_wrote": "[完成] 已写入 {path}",
         "cli.ok_init": "[完成] 已初始化 {path}",
+        # parser
+        "parser.start": "正在解析 {path}",
+        "parser.open": "打开外层 zip {path}",
+        "parser.manifest": "已读取 {path} 的 manifest.json",
+        "parser.scratch": "已读取 {path} 的 scratch.sb3",
+        "parser.project": "已读取 project.json",
+        "parser.done": "已解析 {path}: {block_count} 个积木块, {var_count} 个变量, {proc_count} 个过程",
+        # serializer
+        "ser.unpack": "正在解压模板 {template}",
+        "ser.normalize_assets": "正在规范化资产哈希",
+        "ser.save": "正在保存项目到 {out}",
+        "ser.done": "已保存项目到 {out}",
+        # procedures
+        "proc.define": "定义过程 {name}（{arg_count} 个参数）",
+        "proc.call": "调用过程 {name}",
+        "proc.attach": "为过程 {name} 附加主体（{block_count} 个积木块）",
+        # variables
+        "var.add": "添加变量 {name}",
+        "var.monitor": "注册监视器 {name}",
+        # blocks
+        "block.add": "add_block {opcode} → {bid}",
+        "block.chain": "在 {container} 下链接 {count} 个积木块",
+        # python_first exporter
+        "pf_exp.init": "PythonFirstExporter: {block_count} 个积木块, {var_count} 个变量",
+        "pf_exp.collect_procs": "已收集 {count} 个过程定义",
+        "pf_exp.render": "正在渲染 python-first 导出",
+        "pf_exp.done": "python-first 渲染完成: {proc_count} 个过程, {event_count} 个事件",
+        # stdlib
+        "stdlib.install": "正在安装标准库组 {group}",
+        # workflow
+        "workflow.discover": "从 {base} 搜索默认资源",
+        "workflow.init": "正在初始化工作区 {target}",
+        "workflow.doctor": "正在检查 {base}",
+        "workflow.roundtrip": "往返转换 {in_path} → {out_path}",
+        # flow
+        "flow.start": "FlowBuilder.start()",
+        "flow.procedure": "FlowBuilder.procedure {name}（{arg_count} 个参数）",
+        "flow.chain": "FlowBuilder.chain 在 {parent} 下",
+        # project
+        "project.init": "LLSP3Project 初始化: template={template}",
+        "project.save": "正在保存项目到 {out}",
+        "project.clear": "清除项目代码",
+        # layout
+        "layout.start": "next_start → ({x}, {y})",
+        "layout.event": "next_event → ({x}, {y})",
+        "layout.proc": "next_procedure → ({x}, {y})",
     },
 }
 

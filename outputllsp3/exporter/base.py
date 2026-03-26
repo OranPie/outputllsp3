@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import json
 import keyword
+import logging
 import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _pyrepr(obj: Any) -> str:

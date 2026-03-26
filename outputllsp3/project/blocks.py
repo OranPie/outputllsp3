@@ -6,11 +6,16 @@ control-flow blocks, arithmetic/logical operators, and hardware helpers.
 """
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterable
 
+from ..locale import t
+
 if TYPE_CHECKING:
     from . import LLSP3Project
+
+logger = logging.getLogger(__name__)
 
 
 class BlockManager:
@@ -144,6 +149,7 @@ class BlockManager:
         for child in self._child_block_ids(block["inputs"]):
             if self._p.blocks[child].get("parent") in (None, "INLINE", "TEMP"):
                 self._p.blocks[child]["parent"] = bid
+        logger.debug(t("block.add", opcode=opcode, bid=bid))
         return bid
 
     def add_comment(
@@ -164,6 +170,7 @@ class BlockManager:
 
     def chain(self, container: str, block_ids: Iterable[str]) -> str | None:
         ids = [bid for bid in block_ids if bid]
+        logger.debug(t("block.chain", count=len(ids), container=container))
         for i, bid in enumerate(ids):
             if not isinstance(bid, str):
                 raise TypeError(
@@ -313,6 +320,35 @@ class BlockManager:
 
     def wait_until(self, condition: Any) -> str:
         return self.add_block("control_wait_until", inputs={"CONDITION": self.ref_bool(condition)})
+
+    # -- broadcast helpers ------------------------------------------------
+
+    def _broadcast_id(self, message: str) -> str:
+        """Return (creating if needed) the broadcast ID for *message*."""
+        broadcasts: OrderedDict = self._p.sprite.get("broadcasts", OrderedDict())
+        for bid, name in broadcasts.items():
+            if name == message:
+                return bid
+        bid = self._p._id("bc")
+        broadcasts[bid] = message
+        self._p.sprite["broadcasts"] = broadcasts
+        return bid
+
+    def broadcast(self, message: str) -> str:
+        """Emit an ``event_broadcast`` block (fire-and-forget)."""
+        bid = self._broadcast_id(message)
+        return self.add_block(
+            "event_broadcast",
+            inputs={"BROADCAST_INPUT": [1, [11, message, bid]]},
+        )
+
+    def broadcast_and_wait(self, message: str) -> str:
+        """Emit an ``event_broadcastandwait`` block (waits for receivers to finish)."""
+        bid = self._broadcast_id(message)
+        return self.add_block(
+            "event_broadcastandwait",
+            inputs={"BROADCAST_INPUT": [1, [11, message, bid]]},
+        )
 
     def stop_all(self) -> str:
         return self.add_block(

@@ -23,10 +23,15 @@ other and with the rest of the ``API`` facade.
 from __future__ import annotations
 
 import inspect
+import logging
 from pathlib import Path
 
 from dataclasses import dataclass
 from typing import Any
+
+from .locale import t
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,6 +60,7 @@ class FlowBuilder:
         return out
 
     def start(self, *body: Any, x: int | None = None, y: int | None = None, add_reference_comment: bool = True) -> str:
+        logger.debug(t("flow.start"))
         if x is None or y is None:
             ax, ay = self.layout.next_start() if self.layout is not None else (-220, 90)
             x = ax if x is None else x
@@ -276,6 +282,14 @@ class FlowBuilder:
         """``control_stop`` – stop all scripts."""
         return self.project.stop_all()
 
+    def broadcast(self, message: str) -> str:
+        """``event_broadcast`` – send a message (fire-and-forget)."""
+        return self.project.broadcast(message)
+
+    def broadcast_and_wait(self, message: str) -> str:
+        """``event_broadcastandwait`` – send a message and wait for all receivers."""
+        return self.project.broadcast_and_wait(message)
+
     def repeat_until(self, condition: str, *body: Any) -> str:
         return self.project.repeat_until(condition, *self._flat(*body))
 
@@ -283,6 +297,7 @@ class FlowBuilder:
         return self.project.repeat(times, *self._flat(*body))
 
     def procedure(self, name: str, args: list[str], *body: Any, defaults: list[Any] | None = None, x: int | None = None, y: int | None = None, add_reference_comment: bool = True) -> str:
+        logger.debug(t("flow.procedure", name=name, arg_count=len(args)))
         if x is None or y is None:
             ax, ay = self.layout.next_procedure() if self.layout is not None else (700, 160)
             x = ax if x is None else x
@@ -297,6 +312,7 @@ class FlowBuilder:
         return self.project.call_procedure(name, list(args))
 
     def chain(self, parent: str, *body: Any) -> str | None:
+        logger.debug(t("flow.chain", parent=parent))
         first = self.project.chain(parent, self._flat(*body))
         self.project.blocks[parent]["next"] = first
         return first

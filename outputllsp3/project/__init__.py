@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+import logging
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable
@@ -38,6 +39,9 @@ from .variables import VariableManager
 from .procedures import ProcedureManager
 from .serializer import ProjectSerializer
 from .layout import LayoutManager
+from ..locale import t
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "LLSP3Project",
@@ -80,6 +84,7 @@ class LLSP3Project:
 
         self._serializer.unpack(self.template_llsp3)
         self.project_json["targets"][self.sprite_index]["name"] = sprite_name
+        logger.debug(t("project.init", template=str(template_llsp3)))
         self.clear_code()
 
     # -- ID generation ----------------------------------------------------
@@ -113,6 +118,7 @@ class LLSP3Project:
     # -- state management -------------------------------------------------
 
     def clear_code(self) -> None:
+        logger.debug(t("project.clear"))
         self.sprite["blocks"] = OrderedDict()
         self.sprite["variables"] = OrderedDict()
         self.sprite["lists"] = OrderedDict()
@@ -202,6 +208,8 @@ class LLSP3Project:
     def wait(self, seconds: float) -> str: return self._blocks.wait(seconds)
     def wait_until(self, condition: Any) -> str: return self._blocks.wait_until(condition)
     def stop_all(self) -> str: return self._blocks.stop_all()
+    def broadcast(self, message: str) -> str: return self._blocks.broadcast(message)
+    def broadcast_and_wait(self, message: str) -> str: return self._blocks.broadcast_and_wait(message)
 
     # control flow blocks
     def if_block(self, condition: str, *substack: str) -> str: return self._blocks.if_block(condition, *substack)
@@ -265,6 +273,7 @@ class LLSP3Project:
         return self._serializer.validate()
 
     def save(self, out_path: str | Path) -> Path:
+        logger.debug(t("project.save", out=str(out_path)))
         return self._serializer.save(out_path)
 
     def cleanup(self) -> None:

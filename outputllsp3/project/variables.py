@@ -6,10 +6,15 @@ creation, including namespace qualification.
 from __future__ import annotations
 
 import re
+import logging
 from typing import TYPE_CHECKING, Any
+
+from ..locale import t
 
 if TYPE_CHECKING:
     from . import LLSP3Project
+
+logger = logging.getLogger(__name__)
 
 
 class VariableManager:
@@ -39,6 +44,7 @@ class VariableManager:
 
     def add_variable(self, name: str, value: Any = 0, *, namespace: str | None = None, raw: bool = False) -> str:
         qname = self.qualify_var_name(name, namespace=namespace, raw=raw)
+        logger.debug(t("var.add", name=qname))
         vid = self._p._id("var")
         self._p.variables[vid] = [qname, value]
         return vid
@@ -61,6 +67,7 @@ class VariableManager:
         All matching variables are registered as monitors.
         """
         mode = 'slider' if slider_min is not None or slider_max is not None else 'default'
+        logger.debug(t("var.monitor", name=name))
         cfg = {
             'visible': visible,
             'mode': mode,

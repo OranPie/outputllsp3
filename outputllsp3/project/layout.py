@@ -25,10 +25,16 @@ Public API
 """
 from __future__ import annotations
 
+import logging
+
 # ── Canvas constants (approximate SPIKE editor pixel values) ─────────────────
 _BLOCK_H = 72      # canvas pixels per block line (averaged across block types)
 _HAT_EXTRA = 20    # extra height for hat/event hat blocks
 _STACK_GAP = 80    # minimum vertical gap between consecutive stacks
+
+from ..locale import t
+
+logger = logging.getLogger(__name__)
 
 
 class LayoutManager:
@@ -114,6 +120,7 @@ class LayoutManager:
         """
         pos = (self._start_x, self._start_y)
         self._start_y += self._start_y_step
+        logger.debug(t("layout.start", x=pos[0], y=pos[1]))
         return pos
 
     # ── Event handler blocks ─────────────────────────────────────────────────
@@ -127,6 +134,7 @@ class LayoutManager:
         """
         pos = (self._event_x, self._event_y)
         self._event_y += self._start_y_step
+        logger.debug(t("layout.event", x=pos[0], y=pos[1]))
         return pos
 
     # ── Procedure definitions ─────────────────────────────────────────────────
@@ -142,6 +150,7 @@ class LayoutManager:
         if self._proc_x >= self._proc_x_wrap:
             self._proc_x = self._ini['proc_x']
             self._proc_y += self._proc_y_step
+        logger.debug(t("layout.proc", x=pos[0], y=pos[1]))
         return pos
 
     # ── Post-process layout ───────────────────────────────────────────────────
