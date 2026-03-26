@@ -339,13 +339,38 @@ class DrivebaseAPI:
         left_dir: int = 1,
         right_dir: int = -1,
         kp_straight: float = 22.0,
+        ki_straight: float = 0.0,
         kd_straight: float = 34.0,
         kp_turn: float = 10.0,
+        ki_turn: float = 0.0,
         kd_turn: float = 18.0,
+        kd_alpha: float = 1.0,
+        integral_max: float = 150.0,
         speed_mid: int = 420,
         speed_turn: int = 260,
         speed_pivot: int = 220,
     ) -> dict[str, str]:
+        """Install PID drivebase runtime procedures.
+
+        Parameters
+        ----------
+        kp_straight / ki_straight / kd_straight:
+            PID gains for straight-line heading correction.  ``ki`` defaults
+            to 0 (pure PD) — enable only when you need steady-state correction.
+        kp_turn / ki_turn / kd_turn:
+            PID gains for tank-turn and pivot manoeuvres.
+        kd_alpha:
+            EMA smoothing factor for the derivative term (0 < alpha ≤ 1).
+            ``1.0`` (default) = no smoothing; ``0.3`` = heavy low-pass filter.
+            Lower values reduce sensor noise amplification at the cost of
+            slightly slower derivative response.
+        integral_max:
+            Anti-windup clamp: INTEGRAL is clamped to ``[-integral_max,
+            integral_max]`` every tick.  Prevents runaway accumulation.
+        speed_mid / speed_turn / speed_pivot:
+            Default operating speeds (deg/s) stored as SPIKE variables so
+            they can be adjusted at run-time without recompiling.
+        """
         P = self.project
         flow = self.api.flow
         vars = self.api.vars
@@ -358,28 +383,34 @@ class DrivebaseAPI:
         var_ns = self.api.current_namespace()
 
         for name, value in {
-            "LEFT_DIR": left_dir,
-            "RIGHT_DIR": right_dir,
+            "LEFT_DIR":              left_dir,
+            "RIGHT_DIR":             right_dir,
             "DRIVE_FACTOR_DEG_PER_CM": (3600 / (pi * wheel_diameter_mm)),
-            "KP_STRAIGHT": kp_straight,
-            "KD_STRAIGHT": kd_straight,
-            "KP_TURN": kp_turn,
-            "KD_TURN": kd_turn,
-            "TURN_TOLERANCE_DEG": 1.2,
-            "TARGET_HEADING": 0,
-            "TOTAL_DEG": 0,
-            "TRAVELED": 0,
-            "ERROR": 0,
-            "LAST_ERROR": 0,
-            "DERIVATIVE": 0,
-            "CORRECTION": 0,
-            "BASE": 0,
-            "LEFT_SPEED": 0,
-            "RIGHT_SPEED": 0,
-            "CMD": 0,
-            "SPEED_MID": speed_mid,
-            "SPEED_TURN": speed_turn,
-            "SPEED_PIVOT": speed_pivot,
+            "KP_STRAIGHT":           kp_straight,
+            "KI_STRAIGHT":           ki_straight,
+            "KD_STRAIGHT":           kd_straight,
+            "KP_TURN":               kp_turn,
+            "KI_TURN":               ki_turn,
+            "KD_TURN":               kd_turn,
+            "KD_ALPHA":              kd_alpha,
+            "INTEGRAL_MAX":          integral_max,
+            "TURN_TOLERANCE_DEG":    1.2,
+            "TARGET_HEADING":        0,
+            "TOTAL_DEG":             0,
+            "TRAVELED":              0,
+            "ERROR":                 0,
+            "LAST_ERROR":            0,
+            "DERIVATIVE":            0,
+            "DERIV_SMOOTH":          0,
+            "INTEGRAL":              0,
+            "CORRECTION":            0,
+            "BASE":                  0,
+            "LEFT_SPEED":            0,
+            "RIGHT_SPEED":           0,
+            "CMD":                   0,
+            "SPEED_MID":             speed_mid,
+            "SPEED_TURN":            speed_turn,
+            "SPEED_PIVOT":           speed_pivot,
         }.items():
             vars.add(name, value, namespace=var_ns)
 
@@ -394,6 +425,7 @@ class DrivebaseAPI:
         def GT(a: Any, b: Any) -> str: return ops.gt(a, b)
         def LT(a: Any, b: Any) -> str: return ops.lt(a, b)
 
+        # === Procedure 1: SetDriveSpeed ===
         flow.procedure(
             "SetDriveSpeed", ["left_speed", "right_speed"],
             SET("LEFT_SPEED", MUL(ARG("left_speed"), V("LEFT_DIR"))),
@@ -401,15 +433,48 @@ class DrivebaseAPI:
             move.dual_speed(V("LEFT_SPEED"), V("RIGHT_SPEED")),
             x=700, y=120,
         )
+
+        # === Procedure 2: StopDrive ===
         flow.procedure("StopDrive", [], move.stop(), x=700, y=300)
-        flow.procedure("ResetDrive", [], sensor.reset_yaw(), motor.set_relative_position("A", 0), motor.set_relative_position("B", 0), x=700, y=450)
+
+        # === Procedure 3: ResetDrive ===
+        flow.procedure(
+            "ResetDrive", [],
+            sensor.reset_yaw(),
+            motor.set_relative_position("A", 0),
+            motor.set_relative_position("B", 0),
+            x=700, y=450,
+        )
+
+        # === Procedure 4: MoveStraightDeg — PID heading-hold loop ===
+        #
+        # Each iteration:
+        #   1. Measure distance traveled (avg of both encoder absolutes).
+        #   2. Error  = TARGET_HEADING − yaw.
+        #   3. Raw derivative = ERROR − LAST_ERROR.
+        #   4. EMA-smoothed derivative: DERIV_SMOOTH += (raw − DERIV_SMOOTH) × KD_ALPHA.
+        #      α=1 → no filtering; α<1 → exponential low-pass (reduces noise).
+        #   5. Integral with anti-windup: clamp to ±INTEGRAL_MAX.
+        #   6. CORRECTION = Kp×E + Ki×I + Kd×DERIV_SMOOTH.
+        #   7. Clamp CORRECTION to [−BASE, BASE] — prevents wheel reversal.
+        #   8. Apply differential: left += correction, right −= correction.
         loop_body = [
-            SET("TRAVELED", DIV(ADD(ABS(motor.relative_position("A")), ABS(motor.relative_position("B"))), 2)),
+            SET("TRAVELED", DIV(
+                ADD(ABS(motor.relative_position("A")), ABS(motor.relative_position("B"))), 2)),
             SET("ERROR", SUB(V("TARGET_HEADING"), sensor.angle())),
             SET("DERIVATIVE", SUB(V("ERROR"), V("LAST_ERROR"))),
-            SET("CORRECTION", ADD(MUL(V("KP_STRAIGHT"), V("ERROR")), MUL(V("KD_STRAIGHT"), V("DERIVATIVE")))),
+            SET("DERIV_SMOOTH", ADD(V("DERIV_SMOOTH"),
+                                   MUL(SUB(V("DERIVATIVE"), V("DERIV_SMOOTH")), V("KD_ALPHA")))),
+            SET("INTEGRAL", ADD(V("INTEGRAL"), V("ERROR"))),
+            flow.if_(GT(V("INTEGRAL"),  V("INTEGRAL_MAX")),  SET("INTEGRAL",  V("INTEGRAL_MAX"))),
+            flow.if_(LT(V("INTEGRAL"), SUB(0, V("INTEGRAL_MAX"))), SET("INTEGRAL", SUB(0, V("INTEGRAL_MAX")))),
+            SET("CORRECTION", ADD(
+                ADD(MUL(V("KP_STRAIGHT"), V("ERROR")), MUL(V("KI_STRAIGHT"), V("INTEGRAL"))),
+                MUL(V("KD_STRAIGHT"), V("DERIV_SMOOTH")))),
             SET("BASE", ARG("drive_speed")),
-            SET("LEFT_SPEED", ADD(V("BASE"), V("CORRECTION"))),
+            flow.if_(GT(V("CORRECTION"),  V("BASE")),         SET("CORRECTION",  V("BASE"))),
+            flow.if_(LT(V("CORRECTION"), SUB(0, V("BASE"))), SET("CORRECTION", SUB(0, V("BASE")))),
+            SET("LEFT_SPEED",  ADD(V("BASE"), V("CORRECTION"))),
             SET("RIGHT_SPEED", SUB(V("BASE"), V("CORRECTION"))),
             flow.call("SetDriveSpeed", V("LEFT_SPEED"), V("RIGHT_SPEED")),
             SET("LAST_ERROR", V("ERROR")),
@@ -421,19 +486,39 @@ class DrivebaseAPI:
             wait.ms(80),
             SET("TARGET_HEADING", sensor.angle()),
             SET("TOTAL_DEG", ABS(ARG("target_deg"))),
+            SET("LAST_ERROR",   0),
+            SET("DERIV_SMOOTH", 0),
+            SET("INTEGRAL",     0),
             flow.repeat_until(GT(V("TRAVELED"), V("TOTAL_DEG")), *loop_body),
             flow.call("StopDrive"),
             x=700, y=700,
         )
+
+        # === Procedure 5: MoveStraightCm ===
         flow.procedure(
             "MoveStraightCm", ["distance_cm", "drive_speed"],
-            flow.call("MoveStraightDeg", MUL(ARG("distance_cm"), V("DRIVE_FACTOR_DEG_PER_CM")), ARG("drive_speed")),
+            flow.call("MoveStraightDeg",
+                      MUL(ARG("distance_cm"), V("DRIVE_FACTOR_DEG_PER_CM")),
+                      ARG("drive_speed")),
             x=700, y=1120,
         )
+
+        # === Procedure 6: TurnDeg — tank-turn PID loop ===
+        #
+        # Same EMA + integral structure as the straight loop, but both motors
+        # run in opposite directions.  LAST_ERROR is pre-seeded so the first
+        # derivative is 0 rather than a spike.
         turn_body = [
             SET("ERROR", SUB(ARG("target_angle_deg"), sensor.angle())),
             SET("DERIVATIVE", SUB(V("ERROR"), V("LAST_ERROR"))),
-            SET("CMD", ADD(MUL(V("KP_TURN"), V("ERROR")), MUL(V("KD_TURN"), V("DERIVATIVE")))),
+            SET("DERIV_SMOOTH", ADD(V("DERIV_SMOOTH"),
+                                   MUL(SUB(V("DERIVATIVE"), V("DERIV_SMOOTH")), V("KD_ALPHA")))),
+            SET("INTEGRAL", ADD(V("INTEGRAL"), V("ERROR"))),
+            flow.if_(GT(V("INTEGRAL"),  V("INTEGRAL_MAX")),  SET("INTEGRAL",  V("INTEGRAL_MAX"))),
+            flow.if_(LT(V("INTEGRAL"), SUB(0, V("INTEGRAL_MAX"))), SET("INTEGRAL", SUB(0, V("INTEGRAL_MAX")))),
+            SET("CMD", ADD(
+                ADD(MUL(V("KP_TURN"), V("ERROR")), MUL(V("KI_TURN"), V("INTEGRAL"))),
+                MUL(V("KD_TURN"), V("DERIV_SMOOTH")))),
             flow.call("SetDriveSpeed", SUB(0, V("CMD")), V("CMD")),
             SET("LAST_ERROR", V("ERROR")),
             wait.ms(20),
@@ -442,34 +527,75 @@ class DrivebaseAPI:
             "TurnDeg", ["target_angle_deg", "max_speed"],
             sensor.reset_yaw(),
             wait.ms(80),
-            SET("LAST_ERROR", SUB(ARG("target_angle_deg"), sensor.angle())),
-            flow.repeat_until(LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), 1.2), *turn_body),
+            SET("LAST_ERROR",   SUB(ARG("target_angle_deg"), sensor.angle())),
+            SET("DERIV_SMOOTH", 0),
+            SET("INTEGRAL",     0),
+            flow.repeat_until(
+                LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), V("TURN_TOLERANCE_DEG")),
+                *turn_body),
             flow.call("StopDrive"),
             x=700, y=1360,
         )
+
+        # === Procedures 7 & 8: PivotLeftDeg / PivotRightDeg — single-motor PD ===
+        #
+        # Replaced open-loop (constant speed until tolerance) with PD control:
+        # CMD scales naturally to zero as the robot approaches the target angle,
+        # reducing overshoot without needing manual speed tuning.  Reuses the
+        # turn gains (KP_TURN / KD_TURN) since the angular dynamics are similar.
+        pivot_left_body = [
+            SET("ERROR", SUB(ARG("target_angle_deg"), sensor.angle())),
+            SET("DERIVATIVE", SUB(V("ERROR"), V("LAST_ERROR"))),
+            SET("DERIV_SMOOTH", ADD(V("DERIV_SMOOTH"),
+                                   MUL(SUB(V("DERIVATIVE"), V("DERIV_SMOOTH")), V("KD_ALPHA")))),
+            SET("CMD", ADD(MUL(V("KP_TURN"), V("ERROR")), MUL(V("KD_TURN"), V("DERIV_SMOOTH")))),
+            flow.call("SetDriveSpeed", 0, V("CMD")),
+            SET("LAST_ERROR", V("ERROR")),
+            wait.ms(20),
+        ]
         flow.procedure(
             "PivotLeftDeg", ["target_angle_deg", "max_speed"],
             sensor.reset_yaw(),
             wait.ms(80),
-            flow.repeat_until(LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), 1.2), flow.call("SetDriveSpeed", 0, ARG("max_speed")), wait.ms(20)),
+            SET("LAST_ERROR",   SUB(ARG("target_angle_deg"), sensor.angle())),
+            SET("DERIV_SMOOTH", 0),
+            flow.repeat_until(
+                LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), V("TURN_TOLERANCE_DEG")),
+                *pivot_left_body),
             flow.call("StopDrive"),
             x=700, y=1690,
         )
+
+        pivot_right_body = [
+            SET("ERROR", SUB(ARG("target_angle_deg"), sensor.angle())),
+            SET("DERIVATIVE", SUB(V("ERROR"), V("LAST_ERROR"))),
+            SET("DERIV_SMOOTH", ADD(V("DERIV_SMOOTH"),
+                                   MUL(SUB(V("DERIVATIVE"), V("DERIV_SMOOTH")), V("KD_ALPHA")))),
+            SET("CMD", ADD(MUL(V("KP_TURN"), V("ERROR")), MUL(V("KD_TURN"), V("DERIV_SMOOTH")))),
+            flow.call("SetDriveSpeed", V("CMD"), 0),
+            SET("LAST_ERROR", V("ERROR")),
+            wait.ms(20),
+        ]
         flow.procedure(
             "PivotRightDeg", ["target_angle_deg", "max_speed"],
             sensor.reset_yaw(),
             wait.ms(80),
-            flow.repeat_until(LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), 1.2), flow.call("SetDriveSpeed", ARG("max_speed"), 0), wait.ms(20)),
+            SET("LAST_ERROR",   SUB(ARG("target_angle_deg"), sensor.angle())),
+            SET("DERIV_SMOOTH", 0),
+            flow.repeat_until(
+                LT(ABS(SUB(ARG("target_angle_deg"), sensor.angle())), V("TURN_TOLERANCE_DEG")),
+                *pivot_right_body),
             flow.call("StopDrive"),
             x=700, y=1960,
         )
+
         return {
-            "motor_pair": motor_pair,
+            "motor_pair":        motor_pair,
             "move_straight_deg": "MoveStraightDeg",
-            "move_straight_cm": "MoveStraightCm",
-            "turn_deg": "TurnDeg",
-            "pivot_left_deg": "PivotLeftDeg",
-            "pivot_right_deg": "PivotRightDeg",
+            "move_straight_cm":  "MoveStraightCm",
+            "turn_deg":          "TurnDeg",
+            "pivot_left_deg":    "PivotLeftDeg",
+            "pivot_right_deg":   "PivotRightDeg",
         }
 
 

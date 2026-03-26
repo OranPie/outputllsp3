@@ -3,8 +3,18 @@
 Demonstrates:
 - api.drivebase.install_pid_runtime() for a full PID-controlled robot
 - api.robot helpers: straight_cm, turn_deg, pivot_left_deg
-- SpikeBuilder for clean per-step blocks
 - Composing a multi-step competition run sequence
+
+New in improved PID runtime
+---------------------------
+* ``ki_straight`` / ``ki_turn`` — integral gains (default 0, pure PD).
+  Enable when friction or weight asymmetry causes steady-state heading drift.
+* ``kd_alpha`` — EMA smoothing for derivative (1.0 = off, 0.2–0.4 = noise filter).
+* ``integral_max`` — anti-windup clamp for the integral accumulator.
+* PivotLeftDeg / PivotRightDeg now use PD control (not open-loop constant speed),
+  so they decelerate naturally and overshoot less.
+* TURN_TOLERANCE_DEG, DERIV_SMOOTH, INTEGRAL, KI_*, KD_ALPHA, INTEGRAL_MAX are
+  all exposed as SPIKE variables and can be tweaked at run-time.
 
 Compile::
 
@@ -13,12 +23,14 @@ Compile::
 from outputllsp3 import MotorPair
 
 def build(project, api, ns=None):
-    # Install PID runtime (creates ~6 procedures and ~20 variables)
+    # Install PID runtime (creates 8 procedures and 27 variables).
+    # kd_alpha=0.4 applies light derivative smoothing to reduce sensor noise.
     api.drivebase.install_pid_runtime(
         motor_pair="AB",
         wheel_diameter_mm=62.4,
         left_dir=1,
         right_dir=-1,
+        kd_alpha=0.4,
         speed_mid=420,
         speed_turn=260,
         speed_pivot=220,
