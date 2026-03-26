@@ -153,7 +153,7 @@ class BlockManager:
         return bid
 
     def add_comment(
-        self, block_id: str, text: str, *, x: int | None = None, y: int | None = None,
+        self, block_id: str | None, text: str, *, x: int | None = None, y: int | None = None,
         width: int = 260, height: int = 120, minimized: bool = False,
     ) -> str:
         cid = self._p._id("c")

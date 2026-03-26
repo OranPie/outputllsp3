@@ -193,6 +193,25 @@ class _PFExport:
             for lid, pair in doc.sprite.get('lists', {}).items()
         }
         logger.debug(t("pf_exp.init", block_count=len(self.blocks), var_count=len(self.var_names)))
+        # Build comment lookup: top-level-block-id → list of comment texts.
+        # Each Scratch comment has a blockId pointing to the block it's attached to;
+        # we walk parent links to find the top-level ancestor, then group texts there.
+        # Floating comments (blockId=null) go into _floating_comment_texts.
+        self._tl_comment_map: dict[str, list[str]] = {}  # top-level block id → [text, ...]
+        self._floating_comment_texts: list[str] = []
+        for c in doc.sprite.get('comments', {}).values():
+            bid = c.get('blockId')
+            text = (c.get('text') or '').strip()
+            if not text:
+                continue
+            if not bid:
+                self._floating_comment_texts.append(text)
+            else:
+                tl = self._toplevel_ancestor(bid)
+                if tl:
+                    self._tl_comment_map.setdefault(tl, []).append(text)
+                else:
+                    self._floating_comment_texts.append(text)
         self.proc_defs = self._collect_procedures()
         # Tracking flags — populated during render pass 1
         self._needs_math: bool = False
@@ -211,6 +230,36 @@ class _PFExport:
         if self._ns_prefix and raw.startswith(self._ns_prefix):
             raw = raw[len(self._ns_prefix):]
         return _sanitize(raw, fallback)
+
+    def _toplevel_ancestor(self, block_id: str) -> str | None:
+        """Follow parent links to find the top-level ancestor of a block."""
+        visited: set[str] = set()
+        bid: str | None = block_id
+        while bid and bid not in visited:
+            visited.add(bid)
+            b = self.blocks.get(bid)
+            if b is None:
+                return None
+            if b.get('topLevel'):
+                return bid
+            parent = b.get('parent')
+            if parent is None:
+                return bid  # no parent link but not topLevel — return self
+            bid = parent
+        return None
+
+    def _note_lines(self, top_level_id: str, indent: str = '    ') -> list[str]:
+        """Return ``robot.note(...)`` lines for comments attached to *top_level_id*."""
+        texts = self._tl_comment_map.get(top_level_id, [])
+        lines = []
+        for text in texts:
+            # Multi-line comment text: use triple-quoted string
+            if '\n' in text:
+                safe = text.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
+                lines.append(f'{indent}robot.note("""{safe}""")')
+            else:
+                lines.append(f'{indent}robot.note({text!r})')
+        return lines
 
     def _vname(self, fld_list: list) -> str:
         """Resolve a VARIABLE field list ``[display_name, var_id]`` → clean Python name."""
@@ -1232,6 +1281,10 @@ class _PFExport:
             body = self.render_stmt_chain(proc['body'], '    ')
             if not body:
                 body = ['    pass']
+            # Inject robot.note() lines for comments attached to the def block
+            note_lines = self._note_lines(proc['def_id'])
+            if note_lines:
+                body = note_lines + body
             proc_chunks.append(['@robot.proc', f'def {proc["name"]}({args}):', *body, ''])
 
         # ── Collect all top-level event blocks ────────────────────────────────
@@ -1248,7 +1301,10 @@ class _PFExport:
             if not b.get('topLevel'):
                 continue
             evop = b.get('opcode', '')
-            body_lines = self.render_stmt_chain(b.get('next'), '    ') or ['    pass']
+            raw_body = self.render_stmt_chain(b.get('next'), '    ') or ['    pass']
+            # Prepend robot.note() calls for Scratch comments attached to this hat block
+            note_lines = self._note_lines(bid)
+            body_lines = note_lines + raw_body if note_lines else raw_body
 
             if evop == 'flipperevents_whenProgramStarts':
                 main_counter[0] += 1
@@ -1481,6 +1537,17 @@ class _PFExport:
                 orig_name = pair[0]
                 comment = f'  # {orig_name}' if py_name != orig_name else ''
                 out.append(f'{py_name} = []{comment}')
+            out.append('')
+
+        # Floating comments (not attached to any specific block)
+        if self._floating_comment_texts:
+            out.append(_section('Notes'))
+            for text in self._floating_comment_texts:
+                if '\n' in text:
+                    safe = text.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
+                    out.append(f'robot.note("""{safe}""", floating=True)')
+                else:
+                    out.append(f'robot.note({text!r}, floating=True)')
             out.append('')
 
         # Procedures section

@@ -167,6 +167,10 @@ class _RobotModule:
         """Stub — mark a variable as visible in the SPIKE App monitor panel."""
         return None
 
+    def note(self, text: str, *, floating: bool = False) -> None:
+        """Stub — attach a Scratch comment to the surrounding block at compile time."""
+        return None
+
 
 class _PortModule:
     A = _PortEnum.A.value

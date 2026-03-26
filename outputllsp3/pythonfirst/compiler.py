@@ -122,6 +122,10 @@ class PythonFirstContext:
         self.proc_params: dict[str, list[str]] = {}
         # Maps proc name → {param_name: default_value} for params that have defaults.
         self.proc_defaults: dict[str, dict[str, Any]] = {}
+        # robot.note('text') calls collected per function name for comment attachment.
+        self._fn_notes: dict[str, list[str]] = {}
+        # robot.note('text', floating=True) calls collected at module level.
+        self._floating_notes: list[str] = []
         self.runtime_config = {
             "motor_pair": "AB",
             "left_dir": 1,
@@ -298,8 +302,12 @@ class PythonFirstContext:
                 # Reset flag at the start of each call so it doesn't carry over.
                 init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
             body = self.compile_body(fn.body, fn_name=fn.name, params=set(params), return_ctx=return_ctx)
-            self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, x=700, y=160 + idx * 230)
+            def_id = self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, x=700, y=160 + idx * 230)
             idx += 1
+            # Attach any robot.note() calls from this proc's body as a Scratch comment
+            fn_notes = self._fn_notes.get(fn.name, [])
+            if fn_notes:
+                self.project.add_comment(def_id, '\n'.join(fn_notes))
 
         if self.main_def is None:
             raise RuntimeError("No @run.main function found")
@@ -310,6 +318,10 @@ class PythonFirstContext:
         self.api.flow.chain(start, *main_body)
         if self.notes:
             self.project.add_comment(start, "python-first notes:\n" + "\n".join(self.notes[:12]), x=20, y=20, width=420, height=180)
+        # Attach any robot.note() calls from main's body as a Scratch comment
+        main_notes = self._fn_notes.get(self.main_def.name, [])
+        if main_notes:
+            self.project.add_comment(start, '\n'.join(main_notes))
 
         # Compile all @run.when_*(...) handlers as event-hat stacks.
         for i, ev in enumerate(self._event_handlers):
@@ -319,60 +331,65 @@ class PythonFirstContext:
             kw = ev['kw']
             body = self.compile_body(fn.body, fn_name=fn.name, params=set())
             ev_kwargs: dict = dict(kw)
+            hat_id: str | None = None
             try:
                 if kind == 'broadcast':
                     msg = args[0] if args else kw.get('message', 'message1')
-                    self.api.flow.when('broadcast', *body, message=msg)
+                    hat_id = self.api.flow.when('broadcast', *body, message=msg)
                 elif kind == 'condition':
-                    # lambda: expr — we can't evaluate a lambda at compile time;
-                    # compile the lambda body as a boolean expression block.
-                    lambda_fn = fn  # will be handled via note
                     self.note(f"@run.when_condition: condition compiled as whenCondition block (lambda not supported at compile time)", fn)
-                    # Best-effort: emit a whenCondition with no condition (always-fire)
-                    self.api.flow.when('condition', *body, condition=None)
+                    hat_id = self.api.flow.when('condition', *body, condition=None)
                 elif kind == 'button':
                     button = args[0] if len(args) > 0 else kw.get('button', 'left')
                     action = args[1] if len(args) > 1 else kw.get('action', kw.get('event', 'pressed'))
-                    self.api.flow.when('button', *body, button=button, action=action)
+                    hat_id = self.api.flow.when('button', *body, button=button, action=action)
                 elif kind == 'gesture':
                     gesture = args[0] if args else kw.get('gesture', 'tapped')
-                    self.api.flow.when('gesture', *body, gesture=gesture)
+                    hat_id = self.api.flow.when('gesture', *body, gesture=gesture)
                 elif kind == 'orientation':
                     value = args[0] if args else kw.get('value', 'front')
-                    self.api.flow.when('orientation', *body, value=value)
+                    hat_id = self.api.flow.when('orientation', *body, value=value)
                 elif kind == 'tilted':
                     direction = args[0] if args else kw.get('direction', 'any')
-                    self.api.flow.when('tilted', *body, direction=direction)
+                    hat_id = self.api.flow.when('tilted', *body, direction=direction)
                 elif kind == 'timer':
                     threshold = args[0] if args else kw.get('threshold', 5.0)
-                    self.api.flow.when('timer', *body, threshold=threshold)
+                    hat_id = self.api.flow.when('timer', *body, threshold=threshold)
                 elif kind == 'color':
                     port = args[0] if len(args) > 0 else kw.get('port', 'A')
                     color = args[1] if len(args) > 1 else kw.get('color', 'any')
-                    self.api.flow.when('color', *body, port=port, color=color)
+                    hat_id = self.api.flow.when('color', *body, port=port, color=color)
                 elif kind in ('pressed', 'force'):
                     port = args[0] if len(args) > 0 else kw.get('port', 'A')
                     option = args[1] if len(args) > 1 else kw.get('option', 'pressed')
-                    self.api.flow.when('force', *body, port=port, option=option)
+                    hat_id = self.api.flow.when('force', *body, port=port, option=option)
                 elif kind in ('near_or_far', 'near', 'far'):
                     port = args[0] if len(args) > 0 else kw.get('port', 'A')
                     option = args[1] if len(args) > 1 else kw.get('option', 'near')
-                    self.api.flow.when('near', *body, port=port)
+                    hat_id = self.api.flow.when('near', *body, port=port)
                 elif kind == 'distance':
                     port = args[0] if len(args) > 0 else kw.get('port', 'A')
                     comp = args[1] if len(args) > 1 else kw.get('comparator', 'less_than')
                     value = args[2] if len(args) > 2 else kw.get('value', 10)
-                    self.api.flow.when('distance', *body, port=port, comparator=comp, value=value)
+                    hat_id = self.api.flow.when('distance', *body, port=port, comparator=comp, value=value)
                 elif kind in ('distance_closer_than',):
                     value = args[0] if args else kw.get('value', 10)
-                    self.api.flow.when('near', *body, port='A')
+                    hat_id = self.api.flow.when('near', *body, port='A')
                 elif kind == 'louder_than':
-                    # No direct SPIKE equivalent; emit a note and skip
                     self.note(f"@run.when_louder_than: not supported in SPIKE LLSP3 — skipped", fn)
                 else:
                     self.note(f"@run.when_{kind}: unrecognised event type — skipped", fn)
+                # Attach robot.note() calls from this event handler as a Scratch comment
+                if hat_id is not None:
+                    fn_notes = self._fn_notes.get(fn.name, [])
+                    if fn_notes:
+                        self.project.add_comment(hat_id, '\n'.join(fn_notes))
             except Exception as exc:
                 self.note(f"@run.when_{kind}: compile error ({exc}) — skipped", fn)
+
+        # Apply floating robot.note() calls as unattached Scratch comments
+        for note_text in self._floating_notes:
+            self.project.add_comment(None, note_text)
 
         # Apply deferred monitor declarations: now that all variables have been
         # declared (by data_setvariableto blocks), resolve them by name.
@@ -1124,6 +1141,19 @@ class PythonFirstContext:
             return self.api.sound.stop()
         if name == 'robot.reset_yaw':
             return self.api.sensor.reset_yaw()
+        if name == 'robot.note':
+            # Attach a Scratch comment text to the current function's hat/def block.
+            # robot.note('text') → stored in _fn_notes[fn_name]
+            # robot.note('text', floating=True) → stored in _floating_notes
+            text_val = self.const_eval(call.args[0]) if call.args else ''
+            kw = {kw.arg: self.const_eval(kw.value) for kw in call.keywords}
+            if not isinstance(text_val, str):
+                text_val = str(text_val)
+            if kw.get('floating', False):
+                self._floating_notes.append(text_val)
+            else:
+                self._fn_notes.setdefault(fn_name, []).append(text_val)
+            return None  # no block generated
         if name == 'robot.show_monitor':
             # Metadata-only: marks a variable as visible in the SPIKE monitor panel.
             # Resolves keyword args from the AST call if present.
