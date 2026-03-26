@@ -314,16 +314,47 @@ def main():
 
 
 def test_export_import_random_in_header():
-    """The generated header should contain 'import random'."""
-    src = """\
+    """'import random' should only appear when random.randint is actually used."""
+    src_no_random = """\
 from outputllsp3 import robot, run, port
 
 @run.main
 def main():
     robot.stop()
 """
-    exported = _compile_and_export(src)
-    assert 'import random' in exported
+    exported = _compile_and_export(src_no_random)
+    assert 'import random' not in exported
+
+    src_with_random = """\
+from outputllsp3 import robot, run, port
+
+@run.main
+def main():
+    x = __import__('random').randint(1, 10)
+"""
+    # Build it programmatically since python-first can't generate random directly
+    from outputllsp3 import LLSP3Project, API
+    from outputllsp3.workflow import discover_defaults
+    import tempfile, os
+    d = discover_defaults('.')
+    project = LLSP3Project(d['template'], d['strings'])
+    api = API(project)
+    rnd = project.random(1, 100)
+    api.vars.add('x', 0)
+    set_blk = project.set_variable('x', rnd)
+    api.flow.start(set_blk)
+    with tempfile.NamedTemporaryFile(suffix='.llsp3', delete=False) as f:
+        llsp3 = f.name
+    out_py = llsp3.replace('.llsp3', '_rnd.py')
+    try:
+        project.save(llsp3)
+        from outputllsp3 import export_llsp3_to_python as _exp_rnd
+        _exp_rnd(llsp3, out_py, style='python-first')
+        exported2 = Path(out_py).read_text(encoding='utf-8')
+        assert 'import random' in exported2
+    finally:
+        for p in (llsp3, out_py):
+            if os.path.exists(p): os.unlink(p)
 
 
 def test_export_use_pair_renders_port():
@@ -414,8 +445,9 @@ def test_export_reset_yaw_no_placeholder():
         exported = Path(out_py).read_text(encoding='utf-8')
         ast.parse(exported)
         assert 'robot.reset_yaw()' in exported
-        # __stmt__ is always defined in the header but should not be CALLED
-        assert '__stmt__(' not in exported.split('def __stmt__')[1]
+        # __stmt__ should NOT be defined (only emitted for unknown opcodes)
+        assert 'def __stmt__(' not in exported
+        assert '__stmt__(' not in exported
     finally:
         project.cleanup()
         for p in (llsp3, out_py):
@@ -473,8 +505,9 @@ def test_export_orientation_expr():
         exported = Path(out_py).read_text(encoding='utf-8')
         ast.parse(exported)
         assert 'robot.angle(' in exported
-        # __expr__ is always defined in the header but should not be CALLED
-        assert '__expr__(' not in exported.split('def __expr__')[1]
+        # __expr__ should NOT be defined (only emitted for unknown opcodes)
+        assert 'def __expr__(' not in exported
+        assert '__expr__(' not in exported
     finally:
         project.cleanup()
         for p in (llsp3, out_py):

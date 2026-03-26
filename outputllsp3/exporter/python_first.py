@@ -14,6 +14,15 @@ from .base import _sanitize, _extract_literal, _value_ref
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
+def _join_side(expr: str) -> str:
+    """Wrap *expr* in ``str()`` unless it already is a string literal or a str() call."""
+    if (expr.startswith("'") or expr.startswith('"')) and not expr.startswith('str('):
+        return expr
+    if expr.startswith('str(') and expr.endswith(')'):
+        return expr
+    return f'str({expr})'
+
+
 def _section(text: str, width: int = 78) -> str:
     """Return a decorated section-header comment line."""
     prefix = f'# ── {text} '
@@ -157,11 +166,22 @@ class _PFExport:
     def __init__(self, doc):
         self.doc = doc
         self.blocks = doc.blocks
-        self.var_names = {vid: _sanitize(pair[0], 'var') for vid, pair in doc.variables.items()}
-        self.list_names = {lid: _sanitize(pair[0], 'lst') for lid, pair in doc.sprite.get('lists', {}).items()}
+        # Strip the sprite-name namespace prefix (e.g. "11_pid_robot__") from
+        # variable and list display names so the output uses clean short names.
+        sprite_name = doc.sprite.get('name', '')
+        self._ns_prefix = sprite_name + '__' if sprite_name else ''
+        self.var_names  = {
+            vid: self._clean_name(pair[0], 'var')
+            for vid, pair in doc.variables.items()
+        }
+        self.list_names = {
+            lid: self._clean_name(pair[0], 'lst')
+            for lid, pair in doc.sprite.get('lists', {}).items()
+        }
         self.proc_defs = self._collect_procedures()
         # Tracking flags — populated during render pass 1
         self._needs_math: bool = False
+        self._needs_random: bool = False
         self._needs_direction: bool = False
         self._needs_stop_mode: bool = False
         self._needs_axis: bool = False
@@ -170,6 +190,22 @@ class _PFExport:
         self._needs_comparator: bool = False
         self._unknown_exprs: set[str] = set()
         self._unknown_stmts: set[str] = set()
+
+    def _clean_name(self, raw: str, fallback: str) -> str:
+        """Strip sprite-namespace prefix then sanitize to a valid Python identifier."""
+        if self._ns_prefix and raw.startswith(self._ns_prefix):
+            raw = raw[len(self._ns_prefix):]
+        return _sanitize(raw, fallback)
+
+    def _vname(self, fld_list: list) -> str:
+        """Resolve a VARIABLE field list ``[display_name, var_id]`` → clean Python name."""
+        vid = fld_list[1] if len(fld_list) > 1 else None
+        return self.var_names.get(vid) or self._clean_name(fld_list[0], 'var')
+
+    def _lname(self, fld_list: list) -> str:
+        """Resolve a LIST field list ``[display_name, list_id]`` → clean Python name."""
+        lid = fld_list[1] if len(fld_list) > 1 else None
+        return self.list_names.get(lid) or self._clean_name(fld_list[0], 'lst')
 
     # ── Enum-ref helpers ──────────────────────────────────────────────────────
 
@@ -268,6 +304,14 @@ class _PFExport:
         if ref is None:
             return 'None'
         if isinstance(ref, list):
+            # Inline variable [3/2/1, [12, name, id], ...] or list [13, name, id]
+            inner = ref[1] if len(ref) > 1 else None
+            if isinstance(inner, list) and len(inner) >= 2 and inner[0] in (12, 13):
+                vid_or_lid = inner[2] if len(inner) > 2 else None
+                if inner[0] == 12:  # variable
+                    return self.var_names.get(vid_or_lid) or self._clean_name(inner[1], 'var')
+                else:               # list
+                    return self.list_names.get(vid_or_lid) or self._clean_name(inner[1], 'lst')
             lit = _extract_literal(ref)
             if lit is not None:
                 if isinstance(lit, str) and lit.lstrip('-').replace('.','',1).isdigit():
@@ -279,8 +323,9 @@ class _PFExport:
         block = self.blocks.get(ref, {})
         op = block.get('opcode')
         if op == 'data_variable':
-            fld = block.get('fields', {}).get('VARIABLE', ['var'])
-            return _sanitize(fld[0], 'var')
+            fld = block.get('fields', {}).get('VARIABLE', ['var', None])
+            vid = fld[1] if len(fld) > 1 else None
+            return self.var_names.get(vid) or self._clean_name(fld[0], 'var')
         if op == 'argument_reporter_string_number':
             fld = block.get('fields', {}).get('VALUE', ['arg'])
             return _sanitize(fld[0], 'arg')
@@ -296,6 +341,7 @@ class _PFExport:
         if op == 'operator_random':
             from_ = self.render_expr(block.get('inputs', {}).get('FROM'))
             to = self.render_expr(block.get('inputs', {}).get('TO'))
+            self._needs_random = True
             return f'random.randint({from_}, {to})'
         if op == 'operator_round':
             x = self.render_expr(block.get('inputs', {}).get('NUM'))
@@ -319,7 +365,16 @@ class _PFExport:
         if op == 'operator_join':
             a = self.render_expr(block.get('inputs', {}).get('STRING1'))
             b = self.render_expr(block.get('inputs', {}).get('STRING2'))
-            return f'str({a}) + str({b})'
+            # Skip empty-string sides (str('') is useless padding)
+            a_empty = a in ("''", '""', "''")
+            b_empty = b in ("''", '""', "''")
+            if a_empty and b_empty:
+                return "''"
+            if a_empty:
+                return _join_side(b)
+            if b_empty:
+                return _join_side(a)
+            return f'{_join_side(a)} + {_join_side(b)}'
         if op == 'operator_length':
             s = self.render_expr(block.get('inputs', {}).get('STRING'))
             return f'len({s})'
@@ -346,20 +401,24 @@ class _PFExport:
             hi = self.render_expr(block.get('inputs', {}).get('HIGH'))
             return f'({lo} <= {value} <= {hi})'
         if op == 'data_lengthoflist':
-            lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'len({_sanitize(lst, "lst")})'
+            fld = block.get('fields', {}).get('LIST', ['lst', None])
+            lst = self.list_names.get(fld[1] if len(fld) > 1 else None) or self._clean_name(fld[0], 'lst')
+            return f'len({lst})'
         if op == 'data_itemoflist':
             idx = self.render_expr(block.get('inputs', {}).get('INDEX'))
-            lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'{_sanitize(lst,"lst")}[{idx} - 1]'
+            fld = block.get('fields', {}).get('LIST', ['lst', None])
+            lst = self.list_names.get(fld[1] if len(fld) > 1 else None) or self._clean_name(fld[0], 'lst')
+            return f'{lst}[{idx} - 1]'
         if op == 'data_listcontainsitem':
             item = self.render_expr(block.get('inputs', {}).get('ITEM'))
-            lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'({item} in {_sanitize(lst, "lst")})'
+            fld = block.get('fields', {}).get('LIST', ['lst', None])
+            lst = self.list_names.get(fld[1] if len(fld) > 1 else None) or self._clean_name(fld[0], 'lst')
+            return f'({item} in {lst})'
         if op == 'data_itemnumoflist':
             item = self.render_expr(block.get('inputs', {}).get('ITEM'))
-            lst = block.get('fields', {}).get('LIST', ['lst'])[0]
-            return f'{_sanitize(lst, "lst")}.index({item}) + 1'
+            fld = block.get('fields', {}).get('LIST', ['lst', None])
+            lst = self.list_names.get(fld[1] if len(fld) > 1 else None) or self._clean_name(fld[0], 'lst')
+            return f'{lst}.index({item}) + 1'
         if op == 'flippersensors_orientationAxis':
             axis = block.get('fields', {}).get('AXIS', ['yaw'])[0]
             return f'robot.angle({self._axis(axis)})'
@@ -568,8 +627,7 @@ class _PFExport:
             if op == 'procedures_call' and next_block and next_block.get('opcode') == 'data_setvariableto':
                 proc_part = self._retval_source_proc(next_block.get('inputs', {}).get('VALUE'))
                 if proc_part is not None:
-                    target_raw = next_block.get('fields', {}).get('VARIABLE', ['var'])[0]
-                    target = _sanitize(target_raw, 'var')
+                    target = self._vname(next_block.get('fields', {}).get('VARIABLE', ['var']))
                     proc_call_str = self.render_expr(cur)
                     lines.append(f'{indent}{target} = {proc_call_str}')
                     cur = next_block.get('next')
@@ -626,29 +684,29 @@ class _PFExport:
         ins = block.get('inputs', {})
         flds = block.get('fields', {})
         if op == 'data_setvariableto':
-            name = _sanitize(flds.get('VARIABLE',['var'])[0], 'var')
+            name = self._vname(flds.get('VARIABLE', ['var']))
             return [f'{indent}{name} = {self.render_expr(ins.get("VALUE"))}']
         if op == 'data_changevariableby':
-            name = _sanitize(flds.get('VARIABLE',['var'])[0], 'var')
+            name = self._vname(flds.get('VARIABLE', ['var']))
             return [f'{indent}{name} += {self.render_expr(ins.get("VALUE"))}']
         if op == 'data_addtolist':
-            name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
+            name = self._lname(flds.get('LIST', ['lst']))
             return [f'{indent}{name}.append({self.render_expr(ins.get("ITEM"))})']
         if op == 'data_deletealloflist':
-            name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
+            name = self._lname(flds.get('LIST', ['lst']))
             return [f'{indent}{name}.clear()']
         if op == 'data_insertatlist':
-            name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
+            name = self._lname(flds.get('LIST', ['lst']))
             idx = self.render_expr(ins.get('INDEX'))
             item = self.render_expr(ins.get('ITEM'))
             return [f'{indent}{name}.insert(({idx})-1, {item})']
         if op == 'data_replaceitemoflist':
-            name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
+            name = self._lname(flds.get('LIST', ['lst']))
             idx = self.render_expr(ins.get('INDEX'))
             item = self.render_expr(ins.get('ITEM'))
             return [f'{indent}{name}[{idx} - 1] = {item}']
         if op == 'data_deleteoflist':
-            name = _sanitize(flds.get('LIST',['lst'])[0], 'lst')
+            name = self._lname(flds.get('LIST', ['lst']))
             idx = self.render_expr(ins.get('INDEX'))
             return [f'{indent}del {name}[{idx} - 1]']
         if op == 'control_wait':
@@ -815,8 +873,8 @@ class _PFExport:
             return [f'{indent}robot.set_center_light({self._color(color)})']
         # ── Control: for-each loop ────────────────────────────────────────────
         if op == 'control_for_each':
-            var = _sanitize(flds.get('VARIABLE', ['item'])[0], 'var')
-            lst = _sanitize(flds.get('LIST', ['lst'])[0], 'lst')
+            var = self._vname(flds.get('VARIABLE', ['item']))
+            lst = self._lname(flds.get('LIST', ['lst']))
             body = self.render_stmt_chain(_value_ref(ins.get('SUBSTACK')), indent + '    ') or [indent + '    pass']
             return [f'{indent}for {var} in {lst}:', *body]
         # ── Movement (flippermove_*) ──────────────────────────────────────────────
@@ -1251,9 +1309,11 @@ class _PFExport:
             '',
         ]
 
-        # Imports (import math only when needed; import random always per spec)
+        # Imports — only add what's actually needed
         if self._needs_math:
             out.append('import math')
+        if self._needs_random:
+            out.append('import random')
         enum_imports = [name for flag, name in [
             (self._needs_direction,  'Direction'),
             (self._needs_stop_mode,  'StopMode'),
@@ -1265,40 +1325,43 @@ class _PFExport:
         base_import = 'from outputllsp3 import robot, run, port'
         if enum_imports:
             base_import += ', ' + ', '.join(enum_imports)
-        out += ['import random', base_import, '']
+        out += [base_import, '']
 
-        # Placeholder helpers — always defined (tests verify they exist but are never called)
-        out += [
-            'def __expr__(kind, *args):',
-            '    """Placeholder for expression opcodes without a python-first mapping."""',
-            '    return 0',
-            '',
-            'def __stmt__(kind, *args):',
-            '    """Placeholder for statement opcodes without a python-first mapping."""',
-            '    pass',
-            '',
-        ]
+        # Placeholder helpers — only when there are actually unknown opcodes
+        if self._unknown_exprs or self._unknown_stmts:
+            out += [
+                'def __expr__(kind, *args):',
+                '    """Placeholder for expression opcodes without a python-first mapping."""',
+                '    return 0',
+                '',
+                'def __stmt__(kind, *args):',
+                '    """Placeholder for statement opcodes without a python-first mapping."""',
+                '    pass',
+                '',
+            ]
 
-        # Variables section
+        # Variables section — use clean (namespace-stripped) names
         if self.doc.variables:
             out.append(_section('Variables'))
-            for _, pair in self.doc.variables.items():
-                name = _sanitize(pair[0], 'var')
+            for vid, pair in self.doc.variables.items():
+                name = self.var_names[vid]
                 val = pair[1]
-                # Use single-quote strings for nicer output
                 if isinstance(val, str):
                     lit = f"'{val}'" if "'" not in val else repr(val)
+                elif isinstance(val, float) and val == int(val) and abs(val) < 1e15:
+                    lit = str(int(val))
                 else:
                     lit = repr(val)
                 out.append(f'{name} = {lit}')
             out.append('')
 
-        # Lists section — plain Python lists, comment shows original SPIKE name if different
+        # Lists section — use clean (namespace-stripped) names
         if lists:
             out.append(_section('Lists'))
-            for _, pair in lists.items():
-                py_name = _sanitize(pair[0], 'lst')
-                comment = f'  # {pair[0]}' if py_name != pair[0] else ''
+            for lid, pair in lists.items():
+                py_name = self.list_names[lid]
+                orig_name = pair[0]
+                comment = f'  # {orig_name}' if py_name != orig_name else ''
                 out.append(f'{py_name} = []{comment}')
             out.append('')
 

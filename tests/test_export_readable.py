@@ -278,31 +278,26 @@ def test_pf_hub_show_text():
 
 
 def test_pf_unknown_opcode_no_stmt_call():
-    """Unknown opcodes: __stmt__ defined but never called; pass # TODO used instead."""
-    # Build a project with a valid known opcode, then manually corrupt one block
+    """Unknown opcodes: when present, __stmt__ defined but never called; pass # TODO used instead."""
+    # Build a project with a valid known opcode — no unknown opcodes → no __stmt__
     def build(project, api):
         api.flow.start(api.wait.seconds(1))
 
     exported = _build_export(build)
     ast.parse(exported)
-    # __stmt__ must always be defined
-    assert "def __stmt__(" in exported
-    # __stmt__ must NOT be called in the body after definition
-    body_after_def = exported.split("def __stmt__")[1]
-    assert "__stmt__(" not in body_after_def
+    # No unknown opcodes → __stmt__ should NOT be defined (it's only emitted when needed)
+    assert "def __stmt__(" not in exported
 
 
 def test_pf_unknown_opcode_summary():
-    """Unknown opcodes collected and reported at end of file (via render pass 1)."""
-    # We can't easily inject truly unknown opcodes into the catalog-validated project.
-    # Instead we verify the summary section appears correctly when stubs are unused.
+    """When all opcodes are handled, no stub section or __stmt__ call should appear."""
     def build(project, api):
         api.flow.start(api.wait.seconds(0.1))
 
     exported = _build_export(build)
-    # When ALL opcodes are handled, the summary should NOT appear
-    # (wait uses control_wait which is handled)
-    assert "__stmt__(" not in exported.split("def __stmt__")[1]
+    # When ALL opcodes are handled, neither summary section nor __stmt__ call should appear
+    assert "__stmt__(" not in exported
+    assert "# ── Unmapped opcodes" not in exported
 
 
 # ── builder style improvements ────────────────────────────────────────────────
