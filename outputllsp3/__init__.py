@@ -95,7 +95,7 @@ from .exporter import export_llsp3_to_python
 # ---------------------------------------------------------------------------
 # Standard library
 # ---------------------------------------------------------------------------
-from .stdlib import install_math, install_timing, install_display, install_all, StdLib
+from .stdlib import install_math, install_timing, install_display, install_sensors, install_all, StdLib
 
 # ---------------------------------------------------------------------------
 # Workflow utilities
@@ -171,6 +171,7 @@ __all__ = [
     "install_math",
     "install_timing",
     "install_display",
+    "install_sensors",
     "install_all",
     "StdLib",
     # Workflow

@@ -93,21 +93,51 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def install_math(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
-    """Install ``Clamp``, ``MapRange``, and ``Sign`` procedures.
+    """Install basic math utility procedures.
 
-    Result variables (all in *ns* namespace):
+    **Procedures and their result variables** (all in *ns* namespace):
 
-    - ``MATH_CLAMP`` — written by ``Clamp(value, lo, hi)``
-    - ``MATH_MAP``   — written by ``MapRange(v, from_lo, from_hi, to_lo, to_hi)``
-    - ``MATH_SIGN``  — written by ``Sign(value)``  (−1, 0, or 1)
+    ``Clamp(value, lo, hi)``
+        Clamps *value* into ``[lo, hi]``.  Writes ``MATH_CLAMP``.
+
+    ``MapRange(v, from_lo, from_hi, to_lo, to_hi)``
+        Linearly maps *v* from ``[from_lo, from_hi]`` onto ``[to_lo, to_hi]``.
+        Writes ``MATH_MAP``.
+
+    ``Sign(value)``
+        Writes ``MATH_SIGN`` = −1, 0, or +1.
+
+    ``MinVal(a, b)``
+        Writes ``MATH_MIN`` = the smaller of *a* and *b*.
+
+    ``MaxVal(a, b)``
+        Writes ``MATH_MAX`` = the larger of *a* and *b*.
+
+    ``Lerp(a, b, t)``
+        Linear interpolation: ``a + (b − a) × t``.  Writes ``MATH_LERP``.
+        Use ``t = 0`` → *a*,  ``t = 1`` → *b*.
+
+    ``Deadzone(value, threshold)``
+        Writes ``MATH_DEADZONE`` = 0 if ``abs(value) < threshold``, else *value*.
+        Useful for filtering small sensor noise near zero.
+
+    ``Smooth(prev, curr, alpha)``
+        Exponential moving average: ``prev + (curr − prev) × alpha``.
+        Writes ``MATH_SMOOTH``.  Use small *alpha* (0.05–0.3) for heavy
+        smoothing; larger values (0.5–0.9) for lighter smoothing.
 
     Returns a mapping of procedure names → definition block IDs.
     """
     V, O, F, P = api.vars, api.ops, api.flow, api.project
 
-    V.add("MATH_CLAMP", 0, namespace=ns)
-    V.add("MATH_MAP", 0, namespace=ns)
-    V.add("MATH_SIGN", 0, namespace=ns)
+    V.add("MATH_CLAMP",    0, namespace=ns)
+    V.add("MATH_MAP",      0, namespace=ns)
+    V.add("MATH_SIGN",     0, namespace=ns)
+    V.add("MATH_MIN",      0, namespace=ns)
+    V.add("MATH_MAX",      0, namespace=ns)
+    V.add("MATH_LERP",     0, namespace=ns)
+    V.add("MATH_DEADZONE", 0, namespace=ns)
+    V.add("MATH_SMOOTH",   0, namespace=ns)
 
     # -- Clamp(value, lo, hi) -------------------------------------------
     # Sets MATH_CLAMP = max(lo, min(value, hi))
@@ -148,10 +178,62 @@ def install_math(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
         F.if_(O.lt(P.arg("value"), 0), V.set("MATH_SIGN", -1, namespace=ns)),
     )
 
+    # -- MinVal(a, b) ---------------------------------------------------
+    # Sets MATH_MIN = smaller of a and b
+    min_id = F.procedure(
+        "MinVal", ["a", "b"],
+        V.set("MATH_MIN", P.arg("a"), namespace=ns),
+        F.if_(O.lt(P.arg("b"), P.arg("a")),
+              V.set("MATH_MIN", P.arg("b"), namespace=ns)),
+    )
+
+    # -- MaxVal(a, b) ---------------------------------------------------
+    # Sets MATH_MAX = larger of a and b
+    max_id = F.procedure(
+        "MaxVal", ["a", "b"],
+        V.set("MATH_MAX", P.arg("a"), namespace=ns),
+        F.if_(O.gt(P.arg("b"), P.arg("a")),
+              V.set("MATH_MAX", P.arg("b"), namespace=ns)),
+    )
+
+    # -- Lerp(a, b, t) --------------------------------------------------
+    # Sets MATH_LERP = a + (b - a) * t
+    lerp_id = F.procedure(
+        "Lerp", ["a", "b", "t"],
+        V.set("MATH_LERP",
+              O.add(P.arg("a"),
+                    O.mul(O.sub(P.arg("b"), P.arg("a")), P.arg("t"))),
+              namespace=ns),
+    )
+
+    # -- Deadzone(value, threshold) -------------------------------------
+    # Sets MATH_DEADZONE = 0 if abs(value) < threshold, else value
+    deadzone_id = F.procedure(
+        "Deadzone", ["value", "threshold"],
+        V.set("MATH_DEADZONE", P.arg("value"), namespace=ns),
+        F.if_(O.lt(O.abs(P.arg("value")), P.arg("threshold")),
+              V.set("MATH_DEADZONE", 0, namespace=ns)),
+    )
+
+    # -- Smooth(prev, curr, alpha) --------------------------------------
+    # Sets MATH_SMOOTH = prev + (curr - prev) * alpha  (EMA filter)
+    smooth_id = F.procedure(
+        "Smooth", ["prev", "curr", "alpha"],
+        V.set("MATH_SMOOTH",
+              O.add(P.arg("prev"),
+                    O.mul(O.sub(P.arg("curr"), P.arg("prev")), P.arg("alpha"))),
+              namespace=ns),
+    )
+
     return {
         "Clamp":    clamp_id,
         "MapRange": map_id,
         "Sign":     sign_id,
+        "MinVal":   min_id,
+        "MaxVal":   max_id,
+        "Lerp":     lerp_id,
+        "Deadzone": deadzone_id,
+        "Smooth":   smooth_id,
     }
 
 
@@ -262,19 +344,60 @@ def install_display(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Sensor procedures: SmoothYaw
+# ---------------------------------------------------------------------------
+
+def install_sensors(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
+    """Install sensor-smoothing procedures.
+
+    ``SmoothYaw(samples)``
+        Reads the hub's yaw sensor *samples* times and averages the results
+        into ``SENSOR_YAW``.  Useful to get a stable heading reading that
+        isn't affected by single-sample noise.
+
+    Returns a mapping of procedure names → definition block IDs.
+    """
+    V, O, F, S, P = api.vars, api.ops, api.flow, api.sensor, api.project
+
+    V.add("SENSOR_YAW", 0, namespace=ns)
+    V.add("SENSOR_I",   0, namespace=ns)
+
+    # -- SmoothYaw(samples) ---------------------------------------------
+    # Averages `samples` yaw readings into SENSOR_YAW
+    # Loop: repeat until SENSOR_I >= samples  (= NOT(SENSOR_I < samples))
+    smooth_yaw_id = F.procedure(
+        "SmoothYaw", ["samples"],
+        V.set("SENSOR_YAW", 0, namespace=ns),
+        V.set("SENSOR_I",   0, namespace=ns),
+        F.repeat_until(
+            O.not_(O.lt(V.get("SENSOR_I", namespace=ns), P.arg("samples"))),
+            V.change("SENSOR_YAW", S.yaw(), namespace=ns),
+            V.change("SENSOR_I",   1,        namespace=ns),
+        ),
+        V.set("SENSOR_YAW",
+              O.div(V.get("SENSOR_YAW", namespace=ns), P.arg("samples")),
+              namespace=ns),
+    )
+
+    return {"SmoothYaw": smooth_yaw_id}
+
+
+# ---------------------------------------------------------------------------
 # Convenience: install_all
 # ---------------------------------------------------------------------------
 
 def install_all(api: "API", *, ns: str = "_stdlib") -> dict[str, Any]:
-    """Install all stdlib procedure groups (math, timing, display).
+    """Install all stdlib procedure groups (math, timing, display, sensors).
 
-    Equivalent to calling :func:`install_math`, :func:`install_timing`, and
-    :func:`install_display` in sequence.  Returns a combined name→id dict.
+    Equivalent to calling :func:`install_math`, :func:`install_timing`,
+    :func:`install_display`, and :func:`install_sensors` in sequence.
+    Returns a combined name→id dict.
     """
     results: dict[str, Any] = {}
     results.update(install_math(api, ns=ns))
     results.update(install_timing(api, ns=ns))
     results.update(install_display(api, ns=ns))
+    results.update(install_sensors(api, ns=ns))
     return results
 
 
@@ -290,7 +413,7 @@ class StdLib:
 
     Example::
 
-        api.stdlib.math().timing().display()
+        api.stdlib.math().timing().display().sensors()
 
         # or all at once:
         api.stdlib.all()
@@ -299,6 +422,10 @@ class StdLib:
 
         clamp_speed = api.stdlib.clamp         # MATH_CLAMP reporter
         mapped      = api.stdlib.map_result    # MATH_MAP reporter
+        lerp_out    = api.stdlib.lerp          # MATH_LERP reporter
+        filtered    = api.stdlib.deadzone      # MATH_DEADZONE reporter
+        smoothed    = api.stdlib.smooth        # MATH_SMOOTH reporter
+        heading     = api.stdlib.sensor_yaw    # SENSOR_YAW reporter
     """
 
     def __init__(self, api: "API", *, ns: str = "_stdlib") -> None:
@@ -309,7 +436,7 @@ class StdLib:
     # -- install methods (idempotent) ------------------------------------
 
     def math(self) -> "StdLib":
-        """Install Clamp, MapRange, Sign.  Idempotent."""
+        """Install Clamp, MapRange, Sign, MinVal, MaxVal, Lerp, Deadzone, Smooth."""
         if "math" not in self._installed:
             self._installed["math"] = install_math(self._api, ns=self._ns)
         return self
@@ -326,9 +453,15 @@ class StdLib:
             self._installed["display"] = install_display(self._api, ns=self._ns)
         return self
 
+    def sensors(self) -> "StdLib":
+        """Install SmoothYaw.  Idempotent."""
+        if "sensors" not in self._installed:
+            self._installed["sensors"] = install_sensors(self._api, ns=self._ns)
+        return self
+
     def all(self) -> "StdLib":
-        """Install all stdlib groups.  Idempotent."""
-        self.math().timing().display()
+        """Install all stdlib groups (math, timing, display, sensors).  Idempotent."""
+        self.math().timing().display().sensors()
         return self
 
     # -- result variable reporters --------------------------------------
@@ -347,6 +480,36 @@ class StdLib:
     def sign(self) -> str:
         """Reporter block for ``MATH_SIGN`` (set by ``Sign``)."""
         return self._api.vars.get("MATH_SIGN", namespace=self._ns)
+
+    @property
+    def min_result(self) -> str:
+        """Reporter block for ``MATH_MIN`` (set by ``MinVal``)."""
+        return self._api.vars.get("MATH_MIN", namespace=self._ns)
+
+    @property
+    def max_result(self) -> str:
+        """Reporter block for ``MATH_MAX`` (set by ``MaxVal``)."""
+        return self._api.vars.get("MATH_MAX", namespace=self._ns)
+
+    @property
+    def lerp(self) -> str:
+        """Reporter block for ``MATH_LERP`` (set by ``Lerp``)."""
+        return self._api.vars.get("MATH_LERP", namespace=self._ns)
+
+    @property
+    def deadzone(self) -> str:
+        """Reporter block for ``MATH_DEADZONE`` (set by ``Deadzone``)."""
+        return self._api.vars.get("MATH_DEADZONE", namespace=self._ns)
+
+    @property
+    def smooth(self) -> str:
+        """Reporter block for ``MATH_SMOOTH`` (set by ``Smooth``)."""
+        return self._api.vars.get("MATH_SMOOTH", namespace=self._ns)
+
+    @property
+    def sensor_yaw(self) -> str:
+        """Reporter block for ``SENSOR_YAW`` (set by ``SmoothYaw``)."""
+        return self._api.vars.get("SENSOR_YAW", namespace=self._ns)
 
     @property
     def wait_done(self) -> str:
@@ -377,3 +540,4 @@ class StdLib:
     def __repr__(self) -> str:
         groups = self.installed_groups() or ["(none)"]
         return f"StdLib(ns={self._ns!r}, installed={groups})"
+

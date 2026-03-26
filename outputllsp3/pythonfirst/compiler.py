@@ -15,6 +15,49 @@ from typing import Any
 from ..api import API
 from ..project import LLSP3Project
 from ..locale import t
+from ..enums import (
+    Axis, Color, Comparator, Direction, LightImage,
+    MotorPair, Port, StopMode,
+)
+
+# Flat lookup: "ClassName.MEMBER" → the string value the compiler should emit.
+# Covers all StrEnum members so enum attribute expressions const-eval cleanly.
+_ENUM_ATTRS: dict[str, Any] = {}
+_ENUM_ATTRS.update({f"Axis.{m.name}": m.value for m in Axis})
+_ENUM_ATTRS.update({f"OrientationAxis.{m.name}": m.value for m in Axis})
+_ENUM_ATTRS.update({f"Color.{m.name}": m.value for m in Color})
+_ENUM_ATTRS.update({f"ColorValue.{m.name}": m.value for m in Color})
+_ENUM_ATTRS.update({f"Comparator.{m.name}": m.value for m in Comparator})
+_ENUM_ATTRS.update({f"Direction.{m.name}": m.value for m in Direction})
+_ENUM_ATTRS.update({f"LightImage.{m.name}": m.value for m in LightImage})
+_ENUM_ATTRS.update({f"MotorPair.{m.name}": m.value for m in MotorPair})
+_ENUM_ATTRS.update({f"Port.{m.name}": m.value for m in Port})
+_ENUM_ATTRS.update({f"StopMode.{m.name}": m.value for m in StopMode})
+
+# stdlib result attribute lookup: "stdlib.<name>" → (group_to_install, stdlib_property_name)
+# Both the canonical _result-suffixed names and shorthand aliases are included so
+# users can write either `stdlib.clamp_result` or simply `stdlib.clamp` to read back
+# the result variable after a call.
+_STDLIB_RESULT_ATTRS: dict[str, tuple[str, str]] = {
+    # math group
+    "stdlib.clamp_result":    ("math", "clamp"),
+    "stdlib.clamp":           ("math", "clamp"),
+    "stdlib.map_result":      ("math", "map_result"),
+    "stdlib.sign_result":     ("math", "sign"),
+    "stdlib.sign":            ("math", "sign"),
+    "stdlib.min_result":      ("math", "min_result"),
+    "stdlib.max_result":      ("math", "max_result"),
+    "stdlib.lerp_result":     ("math", "lerp"),
+    "stdlib.lerp":            ("math", "lerp"),
+    "stdlib.deadzone_result": ("math", "deadzone"),
+    "stdlib.deadzone":        ("math", "deadzone"),
+    "stdlib.smooth_result":   ("math", "smooth"),
+    "stdlib.smooth":          ("math", "smooth"),
+    # timing group
+    "stdlib.wait_done":       ("timing", "wait_done"),
+    # sensors group
+    "stdlib.sensor_yaw":      ("sensors", "sensor_yaw"),
+}
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +120,7 @@ class PythonFirstContext:
             "right_dir": -1,
         }
         self.runtime_installed = False
+        self._stdlib_groups_installed: set[str] = set()
 
     def note(self, msg: str, node: ast.AST | None = None) -> None:
         line = getattr(node, "lineno", "?") if node is not None else "?"
@@ -245,6 +289,8 @@ class PythonFirstContext:
             }
             if name in ports:
                 return ports[name]
+            if name in _ENUM_ATTRS:
+                return _ENUM_ATTRS[name]
             return self.const_env.get(name)
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
             v = self.const_eval(expr.operand)
@@ -315,8 +361,15 @@ class PythonFirstContext:
             }
             if name in ports:
                 return ports[name]
+            if name in _ENUM_ATTRS:
+                return _ENUM_ATTRS[name]
             if name in self.const_env:
                 return self.const_env[name]
+            # stdlib result variable reporters (install group on first access)
+            if name in _STDLIB_RESULT_ATTRS:
+                group, prop = _STDLIB_RESULT_ATTRS[name]
+                self.ensure_stdlib_group(group)
+                return getattr(self.api.stdlib, prop)
             return name
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
             return self.api.ops.sub(0, self.compile_expr(expr.operand, fn_name, params))
@@ -356,6 +409,31 @@ class PythonFirstContext:
             if fname == 'robot.reflectivity' and expr.args:
                 port = self.compile_expr(expr.args[0], fn_name, params)
                 return self.api.sensor.reflectivity(port)
+            # sensor reporters without port
+            if fname == 'robot.timer':
+                return self.api.sensor.timer()
+            if fname == 'robot.loudness':
+                return self.api.sensor.loudness()
+            if fname == 'robot.button_pressed':
+                button = self.compile_expr(expr.args[0], fn_name, params) if expr.args else 'center'
+                return self.api.sensor.button_pressed(button)
+            # motor reporters
+            if fname == 'robot.motor_absolute_position' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.motor.absolute_position(port)
+            # boolean sensor checks
+            if fname == 'robot.is_color' and len(expr.args) >= 2:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                color = self.compile_expr(expr.args[1], fn_name, params)
+                return self.api.sensor.is_color(port, color)
+            if fname == 'robot.is_distance' and len(expr.args) >= 3:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                comp = self.compile_expr(expr.args[1], fn_name, params)
+                val = self.compile_expr(expr.args[2], fn_name, params)
+                return self.api.sensor.is_distance(port, comp, val)
+            if fname == 'robot.is_pressed' and expr.args:
+                port = self.compile_expr(expr.args[0], fn_name, params)
+                return self.api.sensor.is_pressed(port)
             if fname.endswith('.contains') and isinstance(expr.func, ast.Attribute) and isinstance(expr.func.value, ast.Name):
                 base = expr.func.value.id
                 if base in self.list_decls and expr.args:
@@ -606,10 +684,15 @@ class PythonFirstContext:
             name = stmt.target.id
             self.api.vars.ensure(name, 0, namespace=fn_name)
             rhs = self.compile_expr(stmt.value, fn_name, params)
+            cur = self.api.vars.get(name, namespace=fn_name)
             if isinstance(stmt.op, ast.Add):
-                return [self.api.vars.set(name, self.api.ops.add(self.api.vars.get(name, namespace=fn_name), rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.add(cur, rhs), namespace=fn_name)]
             if isinstance(stmt.op, ast.Sub):
-                return [self.api.vars.set(name, self.api.ops.sub(self.api.vars.get(name, namespace=fn_name), rhs), namespace=fn_name)]
+                return [self.api.vars.set(name, self.api.ops.sub(cur, rhs), namespace=fn_name)]
+            if isinstance(stmt.op, ast.Mult):
+                return [self.api.vars.set(name, self.api.ops.mul(cur, rhs), namespace=fn_name)]
+            if isinstance(stmt.op, ast.Div):
+                return [self.api.vars.set(name, self.api.ops.div(cur, rhs), namespace=fn_name)]
 
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             return [self.compile_call(stmt.value, fn_name, params)]
@@ -840,6 +923,12 @@ class PythonFirstContext:
             self.api.robot.install_pid(motor_pair=self.runtime_config['motor_pair'], left_dir=self.runtime_config['left_dir'], right_dir=self.runtime_config['right_dir'])
             self.runtime_installed = True
 
+    def ensure_stdlib_group(self, group: str) -> None:
+        """Install a stdlib group on first use (idempotent)."""
+        if group not in self._stdlib_groups_installed:
+            getattr(self.api.stdlib, group)()
+            self._stdlib_groups_installed.add(group)
+
     def compile_call(self, call: ast.Call, fn_name: str, params: set[str]) -> str:
         name = self.attr_name(call.func)
         args = [self.compile_expr(a, fn_name, params) for a in call.args]
@@ -909,10 +998,60 @@ class PythonFirstContext:
             return self.api.sensor.reset_yaw()
         if name == 'robot.run_motor':
             return self.api.motor.run(args[0] if args else 'A', args[1] if len(args) > 1 else 500)
+        if name == 'robot.run_motor_power':
+            return self.api.motor.run_power(args[0] if args else 'A', args[1] if len(args) > 1 else 100)
         if name == 'robot.stop_motor':
             return self.api.motor.stop(args[0] if args else 'A')
         if name == 'robot.motor_run_for_degrees':
             return self.api.motor.run_for_degrees(args[0] if args else 'A', args[1] if len(args) > 1 else 360, args[2] if len(args) > 2 else 500)
+        if name == 'robot.run_motor_for_seconds':
+            return self.api.motor.run_for_seconds(args[0] if args else 'A', args[1] if len(args) > 1 else 1, args[2] if len(args) > 2 else 500)
+        if name == 'robot.run_motor_for':
+            # robot.run_motor_for(port, direction, value, unit)
+            port = args[0] if args else 'A'
+            direction = args[1] if len(args) > 1 else 'clockwise'
+            value = args[2] if len(args) > 2 else 360
+            unit = args[3] if len(args) > 3 else 'degrees'
+            return self.api.motor.run_for_direction(port, direction, value, unit)
+        if name == 'robot.motor_go_to_position':
+            # robot.motor_go_to_position(port, direction, position)
+            port = args[0] if args else 'A'
+            direction = args[1] if len(args) > 1 else 'shortest'
+            position = args[2] if len(args) > 2 else 0
+            return self.api.motor.go_to_position(port, direction, position)
+        if name == 'robot.set_motor_stop_mode':
+            return self.api.motor.set_stop_mode(args[0] if args else 'A', args[1] if len(args) > 1 else 'brake')
+        if name == 'robot.motor_reset_position':
+            port = args[0] if args else 'A'
+            value = args[1] if len(args) > 1 else 0
+            return self.api.motor.reset_relative_position(port, value)
+        if name == 'robot.reset_timer':
+            return self.api.sensor.reset_timer()
+        if name == 'robot.show_image_for':
+            image = args[0] if args else 'HEART'
+            seconds = args[1] if len(args) > 1 else 1
+            return self.api.light.show_image_for(image, seconds)
+        if name == 'robot.set_pixel':
+            x = args[0] if args else 0
+            y = args[1] if len(args) > 1 else 0
+            brightness = args[2] if len(args) > 2 else 100
+            return self.api.light.set_pixel(x, y, brightness)
+        if name == 'robot.set_display_brightness':
+            return self.api.light.set_brightness(args[0] if args else 100)
+        if name == 'robot.set_center_light':
+            return self.api.light.set_center_button(args[0] if args else 'white')
+        if name == 'robot.play_sound':
+            return self.api.sound.play(args[0] if args else 1)
+        if name == 'robot.play_sound_until_done':
+            return self.api.sound.play_until_done(args[0] if args else 1)
+        if name == 'robot.drive':
+            left = args[0] if args else 0
+            right = args[1] if len(args) > 1 else 0
+            return self.api.move.start_dual_speed(left, right)
+        if name == 'robot.steer':
+            steering = args[0] if args else 0
+            speed = args[1] if len(args) > 1 else 50
+            return self.api.move.steer(steering, speed)
 
         # list operations
         if name.endswith('.append') and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
@@ -936,6 +1075,55 @@ class PythonFirstContext:
             if base in self.list_decls and len(args) >= 2:
                 one_based = self.api.ops.add(args[0], 1)
                 return self.api.lists.setitem(self.list_decls[base], one_based, args[1])
+
+        # stdlib calls (install group lazily on first use)
+        # Math group: Clamp, MapRange, Sign, MinVal, MaxVal, Lerp, Deadzone, Smooth
+        if name == 'stdlib.clamp':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("Clamp", *args[:3])
+        if name == 'stdlib.map_range':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("MapRange", *args[:5])
+        if name == 'stdlib.sign':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("Sign", *args[:1])
+        if name == 'stdlib.min_val':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("MinVal", *args[:2])
+        if name == 'stdlib.max_val':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("MaxVal", *args[:2])
+        if name == 'stdlib.lerp':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("Lerp", *args[:3])
+        if name == 'stdlib.deadzone':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("Deadzone", *args[:2])
+        if name == 'stdlib.smooth':
+            self.ensure_stdlib_group('math')
+            return self.api.flow.call("Smooth", *args[:3])
+        # Timing group: WaitOrTimeout, set_wait_done, reset_wait
+        if name == 'stdlib.wait_or_timeout':
+            self.ensure_stdlib_group('timing')
+            return self.api.flow.call("WaitOrTimeout", *args[:1])
+        if name == 'stdlib.set_wait_done':
+            self.ensure_stdlib_group('timing')
+            val = args[0] if args else 1
+            return self.api.stdlib.set_wait_done(val)
+        if name == 'stdlib.reset_wait':
+            self.ensure_stdlib_group('timing')
+            return self.api.stdlib.reset_wait()
+        # Display group: Countdown, FlashText
+        if name == 'stdlib.countdown':
+            self.ensure_stdlib_group('display')
+            return self.api.flow.call("Countdown", *args[:1])
+        if name == 'stdlib.flash_text':
+            self.ensure_stdlib_group('display')
+            return self.api.flow.call("FlashText", *args[:2])
+        # Sensors group: SmoothYaw
+        if name == 'stdlib.smooth_yaw':
+            self.ensure_stdlib_group('sensors')
+            return self.api.flow.call("SmoothYaw", *args[:1])
 
         # procedure call
         if isinstance(call.func, ast.Name):

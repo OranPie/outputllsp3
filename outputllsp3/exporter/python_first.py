@@ -42,6 +42,116 @@ _MATHOP_MAP: dict[str, str] = {
 # mathop names that require `import math` (all except 'abs' which is builtin)
 _MATHOP_NEEDS_MATH: frozenset[str] = frozenset(_MATHOP_MAP) - {'abs', '10 ^', '2 ^'}
 
+# ── Enum value → member-name lookup tables ────────────────────────────────────
+
+# Direction enum (motor rotation + absolute-position path)
+_DIRECTION_MAP: dict[str, str] = {
+    'clockwise':        'CLOCKWISE',
+    'counterclockwise': 'COUNTERCLOCKWISE',
+    'shortest':         'SHORTEST',
+}
+
+# StopMode enum
+_STOP_MODE_MAP: dict[str, str] = {
+    'coast': 'COAST',
+    'brake': 'BRAKE',
+    'hold':  'HOLD',
+    # Numeric forms sometimes stored in block fields
+    '0':     'COAST',
+    '1':     'BRAKE',
+    '2':     'HOLD',
+}
+
+# Axis enum (orientation IMU + cartesian sensors)
+_AXIS_MAP: dict[str, str] = {
+    'yaw':   'YAW',
+    'pitch': 'PITCH',
+    'roll':  'ROLL',
+    'x':     'X',
+    'y':     'Y',
+    'z':     'Z',
+}
+
+# Color enum (uppercase Scratch field values)
+_COLOR_MAP: dict[str, str] = {
+    'black':   'BLACK',
+    'violet':  'VIOLET',
+    'blue':    'BLUE',
+    'azure':   'AZURE',
+    'cyan':    'CYAN',
+    'green':   'GREEN',
+    'yellow':  'YELLOW',
+    'orange':  'ORANGE',
+    'red':     'RED',
+    'magenta': 'MAGENTA',
+    'white':   'WHITE',
+    'none':    'NONE',
+    # Upper-case variants stored directly in block fields
+    'BLACK':   'BLACK',
+    'VIOLET':  'VIOLET',
+    'BLUE':    'BLUE',
+    'AZURE':   'AZURE',
+    'CYAN':    'CYAN',
+    'GREEN':   'GREEN',
+    'YELLOW':  'YELLOW',
+    'ORANGE':  'ORANGE',
+    'RED':     'RED',
+    'MAGENTA': 'MAGENTA',
+    'WHITE':   'WHITE',
+    'NONE':    'NONE',
+}
+
+# LightImage — pixel strings (from Appendix L) and uppercase name strings
+# → LightImage member name
+_PIXEL_TO_IMAGE: dict[str, str] = {
+    # Appendix L pixel data
+    '0000000909000000909000000': 'HAPPY',
+    '0000009090000000909000000': 'SAD',
+    '0909099999099990099900090': 'HEART',
+    '0000009009000000900900000': 'SMILE',
+    '0000060006090900600060000': 'SILLY',
+    '9990099900000000909009090': 'FABULOUS',
+    '0000009090090900090609060': 'MEH',
+    '0000006960069000060609060': 'CONFUSED',
+    '0000000009000900900009000': 'YES',
+    '9000900090009000900090009': 'NO',
+    # Named strings that the builder stores directly in MATRIX fields
+    'HEART':        'HEART',
+    'HEART_SMALL':  'HEART_SMALL',
+    'HAPPY':        'HAPPY',
+    'SAD':          'SAD',
+    'ANGRY':        'ANGRY',
+    'SURPRISED':    'SURPRISED',
+    'SILLY':        'SILLY',
+    'FABULOUS':     'FABULOUS',
+    'MEH':          'MEH',
+    'YES':          'YES',
+    'NO':           'NO',
+    'TRIANGLE':     'TRIANGLE',
+    'TRIANGLE_LEFT':'TRIANGLE_LEFT',
+    'ARROW_RIGHT':  'ARROW_RIGHT',
+    'ARROW_LEFT':   'ARROW_LEFT',
+    'ARROW_UP':     'ARROW_UP',
+    'ARROW_DOWN':   'ARROW_DOWN',
+    'SQUARE':       'SQUARE',
+    'SQUARE_SMALL': 'SQUARE_SMALL',
+    'TARGET':       'TARGET',
+    'TSHIRT':       'TSHIRT',
+    'ROLLERSKATE':  'ROLLERSKATE',
+    'DUCK':         'DUCK',
+    'HOUSE':        'HOUSE',
+    'TORTOISE':     'TORTOISE',
+    'BUTTERFLY':    'BUTTERFLY',
+    'STICKFIGURE':  'STICKFIGURE',
+    'GHOST':        'GHOST',
+    'SWORD':        'SWORD',
+    'GIRAFFE':      'GIRAFFE',
+    'SKULL':        'SKULL',
+    'UMBRELLA':     'UMBRELLA',
+    'SNAKE':        'SNAKE',
+    'ROBOT':        'ROBOT',
+}
+
 
 class _PFExport:
     def __init__(self, doc):
@@ -52,8 +162,68 @@ class _PFExport:
         self.proc_defs = self._collect_procedures()
         # Tracking flags — populated during render pass 1
         self._needs_math: bool = False
+        self._needs_direction: bool = False
+        self._needs_stop_mode: bool = False
+        self._needs_axis: bool = False
+        self._needs_color: bool = False
+        self._needs_image: bool = False
+        self._needs_comparator: bool = False
         self._unknown_exprs: set[str] = set()
         self._unknown_stmts: set[str] = set()
+
+    # ── Enum-ref helpers ──────────────────────────────────────────────────────
+
+    def _dir(self, val: str) -> str:
+        """Convert a raw direction string to a ``Direction.*`` enum reference."""
+        member = _DIRECTION_MAP.get(val) or _DIRECTION_MAP.get(val.lower())
+        if member:
+            self._needs_direction = True
+            return f'Direction.{member}'
+        return repr(val)
+
+    def _stop(self, val: str) -> str:
+        """Convert a raw stop-mode string/int to a ``StopMode.*`` enum reference."""
+        member = _STOP_MODE_MAP.get(val) or _STOP_MODE_MAP.get(val.lower())
+        if member:
+            self._needs_stop_mode = True
+            return f'StopMode.{member}'
+        return repr(val)
+
+    def _axis(self, val: str) -> str:
+        """Convert a raw axis string to an ``Axis.*`` enum reference."""
+        member = _AXIS_MAP.get(val) or _AXIS_MAP.get(val.lower())
+        if member:
+            self._needs_axis = True
+            return f'Axis.{member}'
+        return repr(val)
+
+    def _color(self, val: str) -> str:
+        """Convert a raw color string to a ``Color.*`` enum reference."""
+        member = _COLOR_MAP.get(val)
+        if member:
+            self._needs_color = True
+            return f'Color.{member}'
+        return repr(val)
+
+    def _image(self, expr_str: str) -> str:
+        """Convert a rendered image expression to a ``LightImage.*`` enum reference.
+
+        *expr_str* is already a Python expression string as produced by
+        ``render_expr`` — typically a quoted string like ``'HEART'`` or a
+        25-character pixel string like ``'0909099999...'``.
+        """
+        # Unwrap the surrounding quotes from the repr'd string value.
+        try:
+            import ast as _ast
+            val = _ast.literal_eval(expr_str)
+        except Exception:
+            return expr_str
+        if isinstance(val, str):
+            member = _PIXEL_TO_IMAGE.get(val)
+            if member:
+                self._needs_image = True
+                return f'LightImage.{member}'
+        return expr_str
 
     def _collect_procedures(self):
         procs = []
@@ -192,7 +362,7 @@ class _PFExport:
             return f'{_sanitize(lst, "lst")}.index({item}) + 1'
         if op == 'flippersensors_orientationAxis':
             axis = block.get('fields', {}).get('AXIS', ['yaw'])[0]
-            return f'robot.angle({axis!r})'
+            return f'robot.angle({self._axis(axis)})'
         if op == 'flippersensors_timer':
             return 'run.timer()'
         if op == 'flippersensors_loudness':
@@ -223,7 +393,7 @@ class _PFExport:
         if op == 'flippersensors_isColor':
             port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
             color = self._menu_value(block.get('inputs', {}).get('VALUE')) or '0'
-            return f'robot.is_color(port.{port_name}, {color!r})'
+            return f'robot.is_color(port.{port_name}, {self._color(color)})'
         if op == 'flippersensors_isDistance':
             port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
             comp = self._menu_value(block.get('inputs', {}).get('COMPARATOR')) or 'closer'
@@ -295,10 +465,10 @@ class _PFExport:
             return 'robot.motion()'
         if op == 'flippermoresensors_acceleration':
             axis = block.get('fields', {}).get('AXIS', ['x'])[0]
-            return f'robot.acceleration({axis!r})'
+            return f'robot.acceleration({self._axis(axis)})'
         if op == 'flippermoresensors_angularVelocity':
             axis = block.get('fields', {}).get('AXIS', ['x'])[0]
-            return f'robot.angular_velocity({axis!r})'
+            return f'robot.angular_velocity({self._axis(axis)})'
         # ── Raw/extra sensor reporters ─────────────────────────────────────────
         if op == 'flippersensors_rawColor':
             port_name = self._menu_value(block.get('inputs', {}).get('PORT')) or 'A'
@@ -334,6 +504,11 @@ class _PFExport:
                     f = float(val)
                     return str(int(f)) if f == int(f) else str(f)
                 except (ValueError, TypeError):
+                    # Try to map a known image name or pixel string to LightImage.*
+                    img = _PIXEL_TO_IMAGE.get(val)
+                    if img:
+                        self._needs_image = True
+                        return f'LightImage.{img}'
                     return repr(val)
 
         self._unknown_exprs.add(op or 'unknown')
@@ -538,7 +713,7 @@ class _PFExport:
         if op == 'flippermotor_motorStartDirection':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
-            return [f'{indent}robot.run_motor(port.{port_name}, {direction!r})']
+            return [f'{indent}robot.run_motor(port.{port_name}, {self._dir(direction)})']
         if op == 'flippermotor_motorStop':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             return [f'{indent}robot.stop_motor(port.{port_name})']
@@ -547,12 +722,12 @@ class _PFExport:
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
             value = self.render_expr(ins.get('VALUE'))
             unit = self._menu_value(ins.get('UNIT')) or 'degrees'
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {direction!r}, {value}, {unit!r})']
+            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir(direction)}, {value}, {unit!r})']
         if op == 'flippermotor_motorGoDirectionToPosition':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             direction = self._menu_value(ins.get('DIRECTION')) or 'shortest'
             position = self.render_expr(ins.get('POSITION'))
-            return [f'{indent}robot.motor_go_to_position(port.{port_name}, {direction!r}, {position})']
+            return [f'{indent}robot.motor_go_to_position(port.{port_name}, {self._dir(direction)}, {position})']
         if op == 'flippermotor_motorSetSpeed':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             speed = self.render_expr(ins.get('SPEED'))
@@ -600,7 +775,7 @@ class _PFExport:
             return [f'{indent}robot.set_pixel_brightness(port.{port_name}, {brightness})']
         if op == 'flipperdisplay_centerButtonLight':
             color = self._menu_value(ins.get('COLOR')) or 'white'
-            return [f'{indent}robot.set_center_light({color!r})']
+            return [f'{indent}robot.set_center_light({self._color(color)})']
         # ── Additional motor opcodes (flippermoremotor_*) ─────────────────────
         if op == 'flippermoremotor_motorStartSpeed':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
@@ -615,7 +790,7 @@ class _PFExport:
         if op == 'flippermoremotor_motorSetStopMethod':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_stop_mode(port.{port_name}, {mode!r})']
+            return [f'{indent}robot.set_stop_mode(port.{port_name}, {self._stop(mode)})']
         if op == 'flippermoremotor_motorSetDegreeCounted':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             value = self.render_expr(ins.get('VALUE'))
@@ -637,7 +812,7 @@ class _PFExport:
             return [f'{indent}robot.show_text({text})']
         if op == 'flipperlight_centerButtonLight':
             color = self._menu_value(ins.get('COLOR')) or 'white'
-            return [f'{indent}robot.set_center_light({color!r})']
+            return [f'{indent}robot.set_center_light({self._color(color)})']
         # ── Control: for-each loop ────────────────────────────────────────────
         if op == 'control_for_each':
             var = _sanitize(flds.get('VARIABLE', ['item'])[0], 'var')
@@ -675,7 +850,7 @@ class _PFExport:
             return [f'{indent}robot.set_move_acceleration({accel})']
         if op == 'flippermoremove_movementSetStopMethod':
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_move_stop_mode({mode!r})']
+            return [f'{indent}robot.set_move_stop_mode({self._stop(mode)})']
 
         # ── Motor advanced (flippermoremotor_*) ───────────────────────────────────
         if op == 'flippermoremotor_motorStartPower':
@@ -696,12 +871,12 @@ class _PFExport:
         if op == 'flipperlight_lightDisplayOff':
             return [f'{indent}robot.hub_display_off()']
         if op == 'flipperlight_lightDisplayImageOnForTime':
-            matrix = self.render_expr(ins.get('MATRIX'))
+            matrix = self._image(self.render_expr(ins.get('MATRIX')))
             value = self.render_expr(ins.get('VALUE'))
             return [f'{indent}robot.hub_show_image_for({matrix}, {value})']
         if op == 'flipperlight_lightDisplayRotate':
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
-            return [f'{indent}robot.hub_display_rotate({direction!r})']
+            return [f'{indent}robot.hub_display_rotate({self._dir(direction)})']
         if op == 'flipperlight_lightDisplaySetBrightness':
             brightness = self.render_expr(ins.get('BRIGHTNESS'))
             return [f'{indent}robot.hub_display_brightness({brightness})']
@@ -746,7 +921,7 @@ class _PFExport:
 
         # ── Hub display — show image permanently (no timer) ───────────────────
         if op == 'flipperlight_lightDisplayImageOn':
-            matrix = self.render_expr(ins.get('MATRIX'))
+            matrix = self._image(self.render_expr(ins.get('MATRIX')))
             return [f'{indent}robot.hub_show_image({matrix})']
 
         # ── Color matrix accessory (flipperlight_lightColorMatrix*) ───────────
@@ -775,7 +950,7 @@ class _PFExport:
         if op == 'flipperlight_lightColorMatrixRotate':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
-            return [f'{indent}robot.color_matrix_rotate(port.{port_name}, {direction!r})']
+            return [f'{indent}robot.color_matrix_rotate(port.{port_name}, {self._dir(direction)})']
         if op == 'flipperlight_lightColorMatrixSetOrientation':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             orientation = self._menu_value(ins.get('ORIENTATION')) or 'upright'
@@ -797,7 +972,7 @@ class _PFExport:
         if op == 'flippermotor_motorSetStopMethod':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_stop_mode(port.{port_name}, {mode!r})']
+            return [f'{indent}robot.set_stop_mode(port.{port_name}, {self._stop(mode)})']
 
         # ── Opcode aliases: flippermove_* mirroring flippermoremove_* ─────────
         if op == 'flippermove_movementSetAcceleration':
@@ -805,7 +980,7 @@ class _PFExport:
             return [f'{indent}robot.set_move_acceleration({accel})']
         if op == 'flippermove_movementSetStopMethod':
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_move_stop_mode({mode!r})']
+            return [f'{indent}robot.set_move_stop_mode({self._stop(mode)})']
         if op == 'flippermove_startDualSpeed':
             left = self.render_expr(ins.get('LEFT'))
             right = self.render_expr(ins.get('RIGHT'))
@@ -831,11 +1006,11 @@ class _PFExport:
         if op == 'horizontalmotor_motorTurnClockwiseRotations':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             rotations = self.render_expr(ins.get('ROTATIONS'))
-            return [f"{indent}robot.run_motor_for(port.{port_name}, 'clockwise', {rotations}, 'rotations')"]
+            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir("clockwise")}, {rotations}, \'rotations\')']
         if op == 'horizontalmotor_motorTurnCounterClockwiseRotations':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             rotations = self.render_expr(ins.get('ROTATIONS'))
-            return [f"{indent}robot.run_motor_for(port.{port_name}, 'counterclockwise', {rotations}, 'rotations')"]
+            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir("counterclockwise")}, {rotations}, \'rotations\')']
         if op == 'horizontalmotor_motorSetSpeed':
             port_name = self._menu_value(ins.get('PORT')) or 'A'
             speed = self.render_expr(ins.get('SPEED'))
@@ -1079,7 +1254,18 @@ class _PFExport:
         # Imports (import math only when needed; import random always per spec)
         if self._needs_math:
             out.append('import math')
-        out += ['import random', 'from outputllsp3 import robot, run, port', '']
+        enum_imports = [name for flag, name in [
+            (self._needs_direction,  'Direction'),
+            (self._needs_stop_mode,  'StopMode'),
+            (self._needs_axis,       'Axis'),
+            (self._needs_color,      'Color'),
+            (self._needs_image,      'LightImage'),
+            (self._needs_comparator, 'Comparator'),
+        ] if flag]
+        base_import = 'from outputllsp3 import robot, run, port'
+        if enum_imports:
+            base_import += ', ' + ', '.join(enum_imports)
+        out += ['import random', base_import, '']
 
         # Placeholder helpers — always defined (tests verify they exist but are never called)
         out += [

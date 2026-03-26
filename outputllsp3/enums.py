@@ -10,13 +10,14 @@ Public API
 - ``Port``            – alias for ``MotorPort``
 - ``Button``          – hub button identifiers (``LEFT``, ``CENTER``, ``RIGHT``)
 - ``MotorPairId``     – logical pair index (``PAIR_1``)
-- ``OrientationAxis`` – IMU axis names (``yaw``, ``pitch``, ``roll``)
+- ``OrientationAxis`` – IMU axis names (``yaw``, ``pitch``, ``roll``, ``x``, ``y``, ``z``)
 - ``Axis``            – clean alias for ``OrientationAxis``
 - ``LightImage``      – built-in 5×5 light-matrix images (all 34 SPIKE images)
 - ``Color``           – named color identifiers (full SPIKE palette)
 - ``ColorValue``      – backward-compat alias for ``Color``
 - ``StopMode``        – motor stop behaviour (``coast``, ``brake``, ``hold``)
-- ``Direction``       – motor rotation direction (``clockwise``, ``counterclockwise``)
+- ``Direction``       – motor rotation direction (``clockwise``, ``counterclockwise``,
+                        ``shortest``)
 - ``Comparator``      – comparison operators for sensor threshold checks
 - ``ENUMS``           – frozen namespace collecting all enum classes for legacy calls
 """
@@ -79,6 +80,10 @@ class OrientationAxis(StrEnum):
     YAW = "yaw"
     PITCH = "pitch"
     ROLL = "roll"
+    # Cartesian axes used by acceleration and angular-velocity sensor reporters
+    X = "x"
+    Y = "y"
+    Z = "z"
 
 
 # Axis is a cleaner alias for OrientationAxis
@@ -151,9 +156,10 @@ class StopMode(StrEnum):
 
 
 class Direction(StrEnum):
-    """Motor rotation direction."""
+    """Motor rotation direction, including absolute-position path selector."""
     CLOCKWISE = "clockwise"
     COUNTERCLOCKWISE = "counterclockwise"
+    SHORTEST = "shortest"
 
 
 class Comparator(StrEnum):

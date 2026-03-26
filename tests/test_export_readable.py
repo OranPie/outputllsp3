@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import os
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
 
 import pytest
@@ -385,4 +386,83 @@ def test_all_styles_valid_python(style):
         api.flow.start(api.wait.seconds(1))
 
     exported = _build_export(build, style=style)
+    ast.parse(exported)  # raises SyntaxError if invalid
+
+
+# ── Enum-aware export tests ───────────────────────────────────────────────────
+
+def _add_direction_block(project, api):
+    """Add a flippermotor_motorStartDirection block directly to the project."""
+    from collections import OrderedDict
+    blocks = project.sprite["blocks"]
+    # Start block
+    start_id = api.flow.start()
+    uid = str(id(project))
+    port_menu_id = f"_dir_port_{uid}"
+    dir_menu_id = f"_dir_dir_{uid}"
+    motor_id = f"_dir_motor_{uid}"
+    blocks[port_menu_id] = {
+        "opcode": "flippermoremotor_single-motor-selector",
+        "next": None, "parent": motor_id, "shadow": True, "topLevel": False,
+        "inputs": {}, "fields": OrderedDict([("field_flippermoremotor_single-motor-selector", ["A", None])]),
+    }
+    blocks[dir_menu_id] = {
+        "opcode": "flippermotor_custom-angle-picker",
+        "next": None, "parent": motor_id, "shadow": True, "topLevel": False,
+        "inputs": {}, "fields": OrderedDict([("DIRECTION", ["clockwise", None])]),
+    }
+    blocks[motor_id] = {
+        "opcode": "flippermotor_motorStartDirection",
+        "next": None, "parent": start_id, "shadow": False, "topLevel": False,
+        "inputs": {
+            "PORT": [1, port_menu_id],
+            "DIRECTION": [1, dir_menu_id],
+        },
+        "fields": OrderedDict(),
+    }
+    blocks[start_id]["next"] = motor_id
+
+
+def test_pf_direction_enum_in_export():
+    """python-first export should use Direction.CLOCKWISE, not raw 'clockwise'."""
+    exported = _build_export(_add_direction_block)
+    ast.parse(exported)
+    assert "Direction.CLOCKWISE" in exported, f"Expected Direction.CLOCKWISE in:\n{exported}"
+
+
+def test_pf_stop_mode_enum_in_export():
+    """python-first export should use StopMode.BRAKE, not raw 'brake'."""
+    def build(project, api):
+        api.flow.start(api.motor.set_stop_mode('A', 'brake'))
+
+    exported = _build_export(build)
+    ast.parse(exported)
+    assert "StopMode.BRAKE" in exported, f"Expected StopMode.BRAKE in:\n{exported}"
+    assert "'brake'" not in exported
+
+
+def test_pf_import_widened_with_direction():
+    """Import line must include Direction when direction blocks are present."""
+    exported = _build_export(_add_direction_block)
+    ast.parse(exported)
+    assert "Direction" in exported
+
+
+def test_pf_import_widened_with_stop_mode():
+    """Import line must include StopMode when stop-mode blocks are present."""
+    def build(project, api):
+        api.flow.start(api.motor.set_stop_mode('A', 'brake'))
+
+    exported = _build_export(build)
+    ast.parse(exported)
+    assert "StopMode" in exported
+
+
+def test_pf_export_valid_python_with_enums():
+    """Enum-rich exported file with stop-mode block must parse as valid Python."""
+    def build(project, api):
+        api.flow.start(api.motor.set_stop_mode('A', 'brake'))
+        api.flow.start(api.motor.set_stop_mode('B', 'coast'))
+
+    exported = _build_export(build)
     ast.parse(exported)  # raises SyntaxError if invalid

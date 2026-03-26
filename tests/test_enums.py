@@ -26,6 +26,15 @@ class TestAxis:
         assert str(Axis.PITCH) == "pitch"
         assert str(Axis.ROLL) == "roll"
 
+    def test_xyz(self):
+        assert Axis.X == "x"
+        assert Axis.Y == "y"
+        assert Axis.Z == "z"
+
+    def test_all_six(self):
+        names = {m.name for m in Axis}
+        assert names == {"YAW", "PITCH", "ROLL", "X", "Y", "Z"}
+
 
 class TestLightImage:
     def test_full_set(self):
@@ -66,10 +75,38 @@ class TestStopMode:
         assert str(StopMode.HOLD) == "hold"
 
 
+class TestAxis:
+    def test_alias(self):
+        assert Axis is OrientationAxis
+
+    def test_xyz(self):
+        assert Axis.X == "x"
+        assert Axis.Y == "y"
+        assert Axis.Z == "z"
+
+    def test_all_six(self):
+        names = {m.name for m in Axis}
+        assert names == {"YAW", "PITCH", "ROLL", "X", "Y", "Z"}
+
+
 class TestDirection:
     def test_values(self):
         assert str(Direction.CLOCKWISE) == "clockwise"
         assert str(Direction.COUNTERCLOCKWISE) == "counterclockwise"
+
+    def test_shortest(self):
+        assert Direction.SHORTEST == "shortest"
+        assert str(Direction.SHORTEST) == "shortest"
+
+    def test_all_three(self):
+        assert {m.name for m in Direction} == {"CLOCKWISE", "COUNTERCLOCKWISE", "SHORTEST"}
+
+    def test_shortest(self):
+        assert Direction.SHORTEST == "shortest"
+        assert str(Direction.SHORTEST) == "shortest"
+
+    def test_all_three(self):
+        assert {m.name for m in Direction} == {"CLOCKWISE", "COUNTERCLOCKWISE", "SHORTEST"}
 
 
 class TestComparator:

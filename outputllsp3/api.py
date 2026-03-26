@@ -250,6 +250,12 @@ class MotorAPI:
     def run_for_degrees(self, port: Any, degrees: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=degrees, UNIT="degrees", SPEED=speed)
     def run_for_seconds(self, port: Any, seconds: Any, speed: Any) -> str: return self._w().flippermoremotor.motor_turn_for_speed(PORT=str(port), VALUE=seconds, UNIT="seconds", SPEED=speed)
     def set_stop_mode(self, port: Any, mode: str = "brake") -> str: return self._w().flippermoremotor.motor_set_stop_method(PORT=str(port), STOP=mode)
+    def run_for_direction(self, port: Any, direction: Any, value: Any, unit: str = "degrees") -> str:
+        """Run motor for a given amount in a given direction (no speed arg — uses configured speed)."""
+        return self._w().flippermotor.motor_turn_for_direction(PORT=str(port), DIRECTION=str(direction), VALUE=value, UNIT=unit)
+    def go_to_position(self, port: Any, direction: Any, position: Any) -> str:
+        """Move motor to an absolute position via the given direction."""
+        return self._w().flippermotor.motor_go_direction_to_position(PORT=str(port), DIRECTION=str(direction), VALUE=position, UNIT="degrees")
     def absolute_position(self, port: Any) -> str: return self._w().flippermotor.absolute_position(PORT=str(port))
     def speed(self, port: Any) -> str: return self._w().flippermotor.speed(PORT=str(port))
 

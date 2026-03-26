@@ -115,8 +115,81 @@ class _PortModule:
     F = _PortEnum.F.value
 
 
+class _StdlibModule:
+    """Runtime stub for ``stdlib.*`` calls in Python-first source files.
+
+    Side-effect stubs (statements) return ``None``.  Result-variable
+    properties raise ``RuntimeError`` — they are replaced by variable
+    reporter blocks at compile time.
+    """
+
+    # -- math procedures ------------------------------------------------
+    def clamp(self, value: Any, lo: Any, hi: Any): return None
+    def map_range(self, v: Any, from_lo: Any, from_hi: Any, to_lo: Any, to_hi: Any): return None
+    def sign(self, value: Any): return None
+    def min_val(self, a: Any, b: Any): return None
+    def max_val(self, a: Any, b: Any): return None
+    def lerp(self, a: Any, b: Any, t: Any): return None
+    def deadzone(self, value: Any, threshold: Any): return None
+    def smooth(self, prev: Any, curr: Any, alpha: Any): return None
+
+    # -- timing procedures ----------------------------------------------
+    def wait_or_timeout(self, timeout_ms: Any): return None
+    def set_wait_done(self, value: Any = 1): return None
+    def reset_wait(self): return None
+
+    # -- display procedures ---------------------------------------------
+    def countdown(self, n: Any): return None
+    def flash_text(self, text: Any, times: Any): return None
+
+    # -- sensor procedures ----------------------------------------------
+    def smooth_yaw(self, samples: Any): return None
+
+    # -- result variable accessors (raise at runtime, compiled at build) -
+    @property
+    def clamp_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def map_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def sign_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def min_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def max_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def lerp_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def deadzone_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def smooth_result(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def wait_done(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+    @property
+    def sensor_yaw(self) -> Any:
+        raise RuntimeError("outputllsp3 Python-first expressions are compiled, not executed directly")
+
+
 # Module-level singletons used by Python-first source files
 robot = _RobotModule()
 run = _RunModule()
 port = _PortModule()
 ls = _ListModule()
+stdlib = _StdlibModule()

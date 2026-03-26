@@ -30,7 +30,7 @@ Public API
 - ``transpile_pythonfirst_file(path, …)`` – compile and save ``.llsp3``
 - ``reset_pythonfirst_registry()`` – no-op kept for backward compatibility
 """
-from .runtime import robot, run, port, ls, _RobotModule, _RunModule, _PortModule, _ListModule
+from .runtime import robot, run, port, ls, stdlib, _RobotModule, _RunModule, _PortModule, _ListModule, _StdlibModule
 from .compiler import PythonFirstContext, LoopContext, ReturnContext, UnsupportedNode, _load_source
 from .registry import transpile_pythonfirst_file, reset_pythonfirst_registry
 
