@@ -314,10 +314,20 @@ class _PFExport:
                         return s
                 argdefaults = [_parse_default(argdefaults_raw[i]) if i < len(argdefaults_raw) else None for i in range(len(argnames))]
                 name = (mut.get('proccode') or 'procedure').split(' %s')[0]
+                # Sanitize and deduplicate arg names within this proc.
+                # e.g. two args both named '0/1' → '_0_1', '_0_1_2'
+                sanitized_args: list[str] = []
+                arg_seen: dict[str, int] = {}
+                for a in argnames:
+                    sa = _sanitize(a, 'arg')
+                    arg_seen[sa] = arg_seen.get(sa, 0) + 1
+                    if arg_seen[sa] > 1:
+                        sa = f'{sa}_{arg_seen[sa]}'
+                    sanitized_args.append(sa)
                 procs.append({
                     'def_id': bid,
                     'name': _sanitize(name, 'proc'),
-                    'argnames': [_sanitize(a, 'arg') for a in argnames],
+                    'argnames': sanitized_args,
                     'argdefaults': argdefaults,
                     'body': b.get('next'),
                 })
