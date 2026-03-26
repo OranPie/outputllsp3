@@ -276,6 +276,32 @@ class _PFExport:
         raw = self._menu_value(inp) or 'A'
         return _sanitize(raw, 'A')
 
+    def _port_expr(self, inp) -> str:
+        """Return the full Python expression for a port input.
+        
+        For literal port menu values (A, B, BC, …) returns ``port.A``.
+        For argument reporters or variable reporters returns just the identifier.
+        """
+        ref = _value_ref(inp)
+        if ref and ref in self.blocks:
+            blk = self.blocks[ref]
+            op = blk.get('opcode', '')
+            if op == 'argument_reporter_string_number':
+                fld = blk.get('fields', {}).get('VALUE', ['arg'])
+                return _sanitize(fld[0], 'arg')
+            if op == 'data_variable':
+                fld = blk.get('fields', {}).get('VARIABLE', ['var', None])
+                vid = fld[1] if len(fld) > 1 else None
+                return self.var_names.get(vid) or _sanitize(fld[0], 'var')
+        # Inline variable reference [1/3, [12, name, id], ...]
+        if isinstance(inp, list) and len(inp) > 1 and isinstance(inp[1], list) and inp[1][0] in (12, 13):
+            inner = inp[1]
+            vid = inner[2] if len(inner) > 2 else None
+            return self.var_names.get(vid) or _sanitize(inner[1], 'var')
+        # Literal port from shadow menu
+        raw = self._menu_value(inp) or 'A'
+        return f'port.{_sanitize(raw, "A")}'
+
     def _var_lit(self, val) -> str:
         """Format a variable initial value as a Python literal."""
         if isinstance(val, str):
@@ -549,42 +575,42 @@ class _PFExport:
                 return f'robot.button_released({button!r})'
             return f'robot.button_pressed({button!r})'
         if op == 'flippersensors_distance':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             unit = self._menu_value(block.get('inputs', {}).get('UNIT')) or 'cm'
-            return f'robot.distance(port.{port_name}, {unit!r})'
+            return f'robot.distance({port_expr}, {unit!r})'
         if op == 'flippersensors_reflectivity':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.reflected_light(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.reflected_light({port_expr})'
         if op == 'flippersensors_color':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.color(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.color({port_expr})'
         if op == 'flippersensors_isColor':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             color = self._menu_value(block.get('inputs', {}).get('VALUE')) or '0'
-            return f'robot.is_color(port.{port_name}, {self._color(color)})'
+            return f'robot.is_color({port_expr}, {self._color(color)})'
         if op == 'flippersensors_isDistance':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             comp = self._menu_value(block.get('inputs', {}).get('COMPARATOR')) or 'closer'
             value = self.render_expr(block.get('inputs', {}).get('VALUE'))
             unit = self._menu_value(block.get('inputs', {}).get('UNIT')) or 'cm'
-            return f'robot.is_distance(port.{port_name}, {comp!r}, {value}, {unit!r})'
+            return f'robot.is_distance({port_expr}, {comp!r}, {value}, {unit!r})'
         if op == 'flippersensors_isPressed':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             option = self._menu_value(block.get('inputs', {}).get('OPTION')) or 'pressed'
-            return f'robot.is_pressed(port.{port_name}, {option!r})'
+            return f'robot.is_pressed({port_expr}, {option!r})'
         if op == 'flippersensors_force':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             unit = self._menu_value(block.get('inputs', {}).get('UNIT')) or 'percent'
-            return f'robot.force(port.{port_name}, {unit!r})'
+            return f'robot.force({port_expr}, {unit!r})'
         if op == 'flippermotor_speed':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.motor_speed(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.motor_speed({port_expr})'
         if op == 'flippermotor_absolutePosition':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.motor_position(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.motor_position({port_expr})'
         if op == 'flippermoremotor_position':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.motor_relative_position(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.motor_relative_position({port_expr})'
         if op == 'procedures_call':
             mut = block.get('mutation', {})
             raw_name = (mut.get('proccode') or 'proc').split(' %s')[0]
@@ -612,8 +638,8 @@ class _PFExport:
 
         # flippermoremotor_power expression
         if op == 'flippermoremotor_power':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.motor_power(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.motor_power({port_expr})'
 
         # flippermoremotor_menu_acceleration — shadow menu with value like "3000 3000"
         if op == 'flippermoremotor_menu_acceleration':
@@ -631,10 +657,10 @@ class _PFExport:
 
         # flippersensors_isReflectivity — bool expression with comparator
         if op == 'flippersensors_isReflectivity':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
             comp = block.get('fields', {}).get('COMPARATOR', ['equal'])[0]
             value = self.render_expr(block.get('inputs', {}).get('VALUE'))
-            return f'robot.is_reflected_light(port.{port_name}, {comp!r}, {value})'
+            return f'robot.is_reflected_light({port_expr}, {comp!r}, {value})'
 
         # ── IMU / orientation (flippermoresensors_*) ──────────────────────────
         if op == 'flippermoresensors_orientation':
@@ -649,19 +675,19 @@ class _PFExport:
             return f'robot.angular_velocity({self._axis(axis)})'
         # ── Raw/extra sensor reporters ─────────────────────────────────────────
         if op == 'flippersensors_rawColor':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.raw_color(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.raw_color({port_expr})'
         if op == 'flippersensors_colorValue':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.color_value(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.color_value({port_expr})'
         # ── Hub button pressed (flipperlight / flippersensors variants) ────────
         if op in {'flipperlight_buttonIsPressed', 'flippersensors_hubButtonIsPressed'}:
             button = block.get('fields', {}).get('BUTTON', ['center'])[0]
             return f'robot.hub_button_pressed({button!r})'
         # ── Raw port value ─────────────────────────────────────────────────────
         if op == 'flippermore_port':
-            port_name = self._port_name(block.get('inputs', {}).get('PORT'))
-            return f'robot.port_value(port.{port_name})'
+            port_expr = self._port_expr(block.get('inputs', {}).get('PORT'))
+            return f'robot.port_value({port_expr})'
         # ── Timer (flipperevents_ alias) ───────────────────────────────────────
         if op == 'flipperevents_timer':
             return 'run.timer()'
@@ -880,35 +906,35 @@ class _PFExport:
             right = self.render_expr(ins.get('RIGHT'))
             return [f'{indent}robot.drive_power({left}, {right})']
         if op == 'flippermoremotor_motorSetDegreeCounted':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             value = self.render_expr(ins.get('VALUE'))
-            return [f'{indent}robot.set_motor_position(port.{port_name}, {value})']
+            return [f'{indent}robot.set_motor_position({port_expr}, {value})']
         if op == 'flippersensors_resetYaw':
             return [f'{indent}robot.reset_yaw()']
         if op == 'flippersensors_resetTimer':
             return [f'{indent}run.reset_timer()']
         if op == 'flippermotor_motorStartDirection':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
-            return [f'{indent}robot.run_motor(port.{port_name}, {self._dir(direction)})']
+            return [f'{indent}robot.run_motor({port_expr}, {self._dir(direction)})']
         if op == 'flippermotor_motorStop':
-            port_name = self._port_name(ins.get('PORT'))
-            return [f'{indent}robot.stop_motor(port.{port_name})']
+            port_expr = self._port_expr(ins.get('PORT'))
+            return [f'{indent}robot.stop_motor({port_expr})']
         if op == 'flippermotor_motorTurnForDirection':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
             value = self.render_expr(ins.get('VALUE'))
             unit = self._menu_value(ins.get('UNIT')) or 'degrees'
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir(direction)}, {value}, {unit!r})']
+            return [f'{indent}robot.run_motor_for({port_expr}, {self._dir(direction)}, {value}, {unit!r})']
         if op == 'flippermotor_motorGoDirectionToPosition':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             direction = self._menu_value(ins.get('DIRECTION')) or 'shortest'
             position = self.render_expr(ins.get('POSITION'))
-            return [f'{indent}robot.motor_go_to_position(port.{port_name}, {self._dir(direction)}, {position})']
+            return [f'{indent}robot.motor_go_to_position({port_expr}, {self._dir(direction)}, {position})']
         if op == 'flippermotor_motorSetSpeed':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             speed = self.render_expr(ins.get('SPEED'))
-            return [f'{indent}robot.set_motor_speed(port.{port_name}, {speed})']
+            return [f'{indent}robot.set_motor_speed({port_expr}, {speed})']
         if op == 'flippersound_beep':
             note = self.render_expr(ins.get('NOTE'))
             return [f'{indent}robot.beep({note})']
@@ -925,53 +951,53 @@ class _PFExport:
             sound = self._menu_value(ins.get('SOUND')) or '0'
             return [f'{indent}robot.play_sound_until_done({sound!r})']
         if op == 'flipperdisplay_ledMatrix':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             matrix = self.render_expr(ins.get('MATRIX'))
-            return [f'{indent}robot.show_image(port.{port_name}, {matrix})']
+            return [f'{indent}robot.show_image({port_expr}, {matrix})']
         if op == 'flipperdisplay_ledMatrixFor':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             matrix = self.render_expr(ins.get('MATRIX'))
             value = self.render_expr(ins.get('VALUE'))
-            return [f'{indent}robot.show_image_for(port.{port_name}, {matrix}, {value})']
+            return [f'{indent}robot.show_image_for({port_expr}, {matrix}, {value})']
         if op == 'flipperdisplay_ledMatrixText':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             text = self.render_expr(ins.get('TEXT'))
-            return [f'{indent}robot.show_text(port.{port_name}, {text})']
+            return [f'{indent}robot.show_text({port_expr}, {text})']
         if op == 'flipperdisplay_ledMatrixOff':
-            port_name = self._port_name(ins.get('PORT'))
-            return [f'{indent}robot.turn_off_pixels(port.{port_name})']
+            port_expr = self._port_expr(ins.get('PORT'))
+            return [f'{indent}robot.turn_off_pixels({port_expr})']
         if op == 'flipperdisplay_ledMatrixOn':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             x = self.render_expr(ins.get('X'))
             y = self.render_expr(ins.get('Y'))
             brightness = self.render_expr(ins.get('BRIGHTNESS'))
-            return [f'{indent}robot.set_pixel(port.{port_name}, {x}, {y}, {brightness})']
+            return [f'{indent}robot.set_pixel({port_expr}, {x}, {y}, {brightness})']
         if op == 'flipperdisplay_ledMatrixBrightness':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             brightness = self.render_expr(ins.get('BRIGHTNESS'))
-            return [f'{indent}robot.set_pixel_brightness(port.{port_name}, {brightness})']
+            return [f'{indent}robot.set_pixel_brightness({port_expr}, {brightness})']
         if op == 'flipperdisplay_centerButtonLight':
             color = self._menu_value(ins.get('COLOR')) or 'white'
             return [f'{indent}robot.set_center_light({self._color(color)})']
         # ── Additional motor opcodes (flippermoremotor_*) ─────────────────────
         if op == 'flippermoremotor_motorStartSpeed':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             speed = self.render_expr(ins.get('SPEED'))
-            return [f'{indent}robot.run_motor(port.{port_name}, {speed})']
+            return [f'{indent}robot.run_motor({port_expr}, {speed})']
         if op == 'flippermoremotor_motorTurnForSpeed':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             value = self.render_expr(ins.get('VALUE'))
             unit = self._menu_value(ins.get('UNIT')) or 'degrees'
             speed = self.render_expr(ins.get('SPEED'))
-            return [f"{indent}robot.run_motor_for(port.{port_name}, {value}, '{unit}', speed={speed})"]
+            return [f"{indent}robot.run_motor_for({port_expr}, {value}, '{unit}', speed={speed})"]
         if op == 'flippermoremotor_motorSetStopMethod':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_stop_mode(port.{port_name}, {self._stop(mode)})']
+            return [f'{indent}robot.set_stop_mode({port_expr}, {self._stop(mode)})']
         if op == 'flippermoremotor_motorSetDegreeCounted':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             value = self.render_expr(ins.get('VALUE'))
-            return [f'{indent}robot.set_motor_position(port.{port_name}, {value})']
+            return [f'{indent}robot.set_motor_position({port_expr}, {value})']
         # ── Additional drive/steer opcodes ────────────────────────────────────
         if op == 'flippermoremove_startSteerAtSpeed':
             steering = self.render_expr(ins.get('STEERING'))
@@ -1031,18 +1057,18 @@ class _PFExport:
 
         # ── Motor advanced (flippermoremotor_*) ───────────────────────────────────
         if op == 'flippermoremotor_motorStartPower':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             power = self.render_expr(ins.get('POWER'))
-            return [f'{indent}robot.run_motor_power(port.{port_name}, {power})']
+            return [f'{indent}robot.run_motor_power({port_expr}, {power})']
         if op == 'flippermoremotor_motorGoToRelativePosition':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             position = self.render_expr(ins.get('POSITION'))
             speed = self.render_expr(ins.get('SPEED'))
-            return [f'{indent}robot.motor_go_to_relative_position(port.{port_name}, {position}, {speed})']
+            return [f'{indent}robot.motor_go_to_relative_position({port_expr}, {position}, {speed})']
         if op == 'flippermoremotor_motorSetAcceleration':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             accel = self.render_expr(ins.get('ACCELERATION'))
-            return [f'{indent}robot.set_motor_acceleration(port.{port_name}, {accel})']
+            return [f'{indent}robot.set_motor_acceleration({port_expr}, {accel})']
 
         # ── Hub display (flipperlight_*) ───────────────────────────────────────────
         if op == 'flipperlight_lightDisplayOff':
@@ -1066,9 +1092,9 @@ class _PFExport:
             brightness = self.render_expr(ins.get('BRIGHTNESS'))
             return [f'{indent}robot.hub_set_pixel({x}, {y}, {brightness})']
         if op == 'flipperlight_ultrasonicLightUp':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             value = self.render_expr(ins.get('VALUE'))
-            return [f'{indent}robot.ultrasonic_light(port.{port_name}, {value})']
+            return [f'{indent}robot.ultrasonic_light({port_expr}, {value})']
 
         # ── Control ───────────────────────────────────────────────────────────────
         if op == 'flippercontrol_stopOtherStacks':
@@ -1119,35 +1145,35 @@ class _PFExport:
 
         # ── Color matrix accessory (flipperlight_lightColorMatrix*) ───────────
         if op == 'flipperlight_lightColorMatrixImageOn':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             image = self.render_expr(ins.get('IMAGE'))
-            return [f'{indent}robot.color_matrix(port.{port_name}, {image})']
+            return [f'{indent}robot.color_matrix({port_expr}, {image})']
         if op == 'flipperlight_lightColorMatrixImageOnForTime':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             image = self.render_expr(ins.get('IMAGE'))
             duration = self.render_expr(ins.get('VALUE'))
-            return [f'{indent}robot.color_matrix_for(port.{port_name}, {image}, {duration})']
+            return [f'{indent}robot.color_matrix_for({port_expr}, {image}, {duration})']
         if op == 'flipperlight_lightColorMatrixOff':
-            port_name = self._port_name(ins.get('PORT'))
-            return [f'{indent}robot.color_matrix_off(port.{port_name})']
+            port_expr = self._port_expr(ins.get('PORT'))
+            return [f'{indent}robot.color_matrix_off({port_expr})']
         if op == 'flipperlight_lightColorMatrixSetBrightness':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             brightness = self.render_expr(ins.get('BRIGHTNESS'))
-            return [f'{indent}robot.color_matrix_brightness(port.{port_name}, {brightness})']
+            return [f'{indent}robot.color_matrix_brightness({port_expr}, {brightness})']
         if op == 'flipperlight_lightColorMatrixSetPixel':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             x = self.render_expr(ins.get('X'))
             y = self.render_expr(ins.get('Y'))
             color = self.render_expr(ins.get('COLOR'))
-            return [f'{indent}robot.color_matrix_pixel(port.{port_name}, {x}, {y}, {color})']
+            return [f'{indent}robot.color_matrix_pixel({port_expr}, {x}, {y}, {color})']
         if op == 'flipperlight_lightColorMatrixRotate':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             direction = self._menu_value(ins.get('DIRECTION')) or 'clockwise'
-            return [f'{indent}robot.color_matrix_rotate(port.{port_name}, {self._dir(direction)})']
+            return [f'{indent}robot.color_matrix_rotate({port_expr}, {self._dir(direction)})']
         if op == 'flipperlight_lightColorMatrixSetOrientation':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             orientation = self._menu_value(ins.get('ORIENTATION')) or 'upright'
-            return [f'{indent}robot.color_matrix_orientation(port.{port_name}, {orientation!r})']
+            return [f'{indent}robot.color_matrix_orientation({port_expr}, {orientation!r})']
 
         # ── Misc / flippermore ────────────────────────────────────────────────
         if op == 'flippermore_stopOtherStacks':
@@ -1159,13 +1185,13 @@ class _PFExport:
 
         # ── Opcode aliases: flippermotor_* mirroring flippermoremotor_* ───────
         if op == 'flippermotor_motorSetAcceleration':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             accel = self.render_expr(ins.get('ACCELERATION'))
-            return [f'{indent}robot.set_motor_acceleration(port.{port_name}, {accel})']
+            return [f'{indent}robot.set_motor_acceleration({port_expr}, {accel})']
         if op == 'flippermotor_motorSetStopMethod':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             mode = flds.get('STOP', ['coast'])[0].lower()
-            return [f'{indent}robot.set_stop_mode(port.{port_name}, {self._stop(mode)})']
+            return [f'{indent}robot.set_stop_mode({port_expr}, {self._stop(mode)})']
 
         # ── Opcode aliases: flippermove_* mirroring flippermoremove_* ─────────
         if op == 'flippermove_movementSetAcceleration':
@@ -1197,20 +1223,20 @@ class _PFExport:
 
         # ── Horizontal (icon) mode blocks — motor ─────────────────────────────
         if op == 'horizontalmotor_motorTurnClockwiseRotations':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             rotations = self.render_expr(ins.get('ROTATIONS'))
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir("clockwise")}, {rotations}, \'rotations\')']
+            return [f'{indent}robot.run_motor_for({port_expr}, {self._dir("clockwise")}, {rotations}, \'rotations\')']
         if op == 'horizontalmotor_motorTurnCounterClockwiseRotations':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             rotations = self.render_expr(ins.get('ROTATIONS'))
-            return [f'{indent}robot.run_motor_for(port.{port_name}, {self._dir("counterclockwise")}, {rotations}, \'rotations\')']
+            return [f'{indent}robot.run_motor_for({port_expr}, {self._dir("counterclockwise")}, {rotations}, \'rotations\')']
         if op == 'horizontalmotor_motorSetSpeed':
-            port_name = self._port_name(ins.get('PORT'))
+            port_expr = self._port_expr(ins.get('PORT'))
             speed = self.render_expr(ins.get('SPEED'))
-            return [f'{indent}robot.set_motor_speed(port.{port_name}, {speed})']
+            return [f'{indent}robot.set_motor_speed({port_expr}, {speed})']
         if op == 'horizontalmotor_motorStop':
-            port_name = self._port_name(ins.get('PORT'))
-            return [f'{indent}robot.stop_motor(port.{port_name})']
+            port_expr = self._port_expr(ins.get('PORT'))
+            return [f'{indent}robot.stop_motor({port_expr})']
 
         # ── Horizontal (icon) mode blocks — movement ──────────────────────────
         if op == 'horizontalmove_moveForward':
@@ -1338,16 +1364,16 @@ class _PFExport:
                 event_chunks.append([f'@run.when_timer({threshold})', f'def {fn}():', *body_lines, ''])
 
             elif evop == 'flipperevents_whenColor':
-                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                port_expr = self._port_expr(b.get('inputs', {}).get('PORT'))
                 option = self._menu_value(b.get('inputs', {}).get('OPTION')) or 'any'
                 fn = _fn_name('on_color')
-                event_chunks.append([f'@run.when_color(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+                event_chunks.append([f'@run.when_color({port_expr}, {option!r})', f'def {fn}():', *body_lines, ''])
 
             elif evop == 'flipperevents_whenPressed':
-                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                port_expr = self._port_expr(b.get('inputs', {}).get('PORT'))
                 option = b.get('fields', {}).get('OPTION', ['pressed'])[0]
                 fn = _fn_name('on_pressed')
-                event_chunks.append([f'@run.when_pressed(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+                event_chunks.append([f'@run.when_pressed({port_expr}, {option!r})', f'def {fn}():', *body_lines, ''])
 
             elif evop == 'flipperevents_whenCondition':
                 cond = self.render_expr(b.get('inputs', {}).get('CONDITION'))
@@ -1365,17 +1391,17 @@ class _PFExport:
                 event_chunks.append([f'@run.when_broadcast({broadcast!r})', f'def {fn}():', *body_lines, ''])
 
             elif evop == 'flipperevents_whenNearOrFar':
-                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                port_expr = self._port_expr(b.get('inputs', {}).get('PORT'))
                 option = b.get('fields', {}).get('OPTION', ['near'])[0]
                 fn = _fn_name('on_near_or_far')
-                event_chunks.append([f'@run.when_near_or_far(port.{port_name}, {option!r})', f'def {fn}():', *body_lines, ''])
+                event_chunks.append([f'@run.when_near_or_far({port_expr}, {option!r})', f'def {fn}():', *body_lines, ''])
 
             elif evop == 'flipperevents_whenDistance':
-                port_name = self._menu_value(b.get('inputs', {}).get('PORT')) or 'A'
+                port_expr = self._port_expr(b.get('inputs', {}).get('PORT'))
                 comp = b.get('fields', {}).get('COMPARATOR', ['less_than'])[0]
                 value = self.render_expr(b.get('inputs', {}).get('VALUE'))
                 fn = _fn_name('on_distance')
-                event_chunks.append([f'@run.when_distance(port.{port_name}, {comp!r}, {value})', f'def {fn}():', *body_lines, ''])
+                event_chunks.append([f'@run.when_distance({port_expr}, {comp!r}, {value})', f'def {fn}():', *body_lines, ''])
 
             # ── Horizontal (icon) events ────────────────────────────────────────
             elif evop == 'horizontalevents_whenProgramStarts':

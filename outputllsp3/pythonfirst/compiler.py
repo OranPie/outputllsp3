@@ -77,19 +77,29 @@ _STDLIB_RESULT_ATTRS: dict[str, tuple[str, str]] = {
 logger = logging.getLogger(__name__)
 
 
+def _has_direct_break_or_continue(stmts: list) -> tuple[bool, bool]:
+    """Return (has_break, has_continue) at this scope only — does not recurse into nested loops."""
+    has_break = has_continue = False
+    def _check(nodes):
+        nonlocal has_break, has_continue
+        for node in nodes:
+            if isinstance(node, ast.Break):
+                has_break = True
+            elif isinstance(node, ast.Continue):
+                has_continue = True
+            elif isinstance(node, (ast.While, ast.For)):
+                pass  # don't look inside nested loops
+            elif isinstance(node, ast.If):
+                _check(node.body)
+                _check(node.orelse)
+    _check(stmts)
+    return has_break, has_continue
+
+
 def _has_direct_break(body: list) -> bool:
     """Return True if body directly contains a Break (not inside a nested loop)."""
-    for node in body:
-        if isinstance(node, ast.Break):
-            return True
-        if isinstance(node, (ast.While, ast.For)):
-            continue  # break in nested loop is independent
-        for child in ast.walk(node):
-            if isinstance(child, (ast.While, ast.For)):
-                continue
-            if isinstance(child, ast.Break):
-                return True
-    return False
+    has_break, _ = _has_direct_break_or_continue(body)
+    return has_break
 
 
 class UnsupportedNode(Exception):
@@ -542,8 +552,22 @@ class PythonFirstContext:
                 group, prop = _STDLIB_RESULT_ATTRS[name]
                 self.ensure_stdlib_group(group)
                 return getattr(self.api.stdlib, prop)
+            # port.X where X is not a literal port — treat X as a variable/parameter reference
+            if isinstance(expr.value, ast.Name) and expr.value.id == 'port':
+                attr = expr.attr
+                if attr in params:
+                    return self.project.arg(attr)
+                if attr in self._global_vars:
+                    return self.api.vars.get(attr, namespace="")
+                try:
+                    return self.api.vars.get(attr, namespace=fn_name)
+                except Exception:
+                    return attr
             return name
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.USub):
+            # Constant folding: -1 → -1 literal (no operator_subtract block needed)
+            if isinstance(expr.operand, ast.Constant) and isinstance(expr.operand.value, (int, float)):
+                return -expr.operand.value
             return self.api.ops.sub(0, self.compile_expr(expr.operand, fn_name, params))
         if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
             return self.api.ops.not_(self.compile_condition(expr.operand, fn_name, params))
@@ -708,6 +732,9 @@ class PythonFirstContext:
         return self.api.ops.gt(value, 0)
 
     def negate_condition(self, expr: ast.expr, fn_name: str, params: set[str]) -> str:
+        # Double-negation elimination: negate(not X) → compile_condition(X)
+        if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
+            return self.compile_condition(expr.operand, fn_name, params)
         if isinstance(expr, ast.Compare) and len(expr.ops) == 1 and len(expr.comparators) == 1:
             left = self.compile_expr(expr.left, fn_name, params)
             right_node = expr.comparators[0]
@@ -892,12 +919,18 @@ class PythonFirstContext:
             return [self.api.flow.if_(cond, *body)] if body else []
 
         if isinstance(stmt, ast.While):
-            # `while True:` with no break → native forever block (simpler)
             is_forever = isinstance(stmt.test, ast.Constant) and stmt.test.value is True
-            if is_forever and not _has_direct_break(stmt.body) and not stmt.orelse:
-                body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
-                return [self.api.flow.forever(*body_blocks)]
+            has_break, has_continue = _has_direct_break_or_continue(stmt.body)
 
+            # Fast path: no break/continue → direct repeat_until, no loop vars, no per-stmt guards
+            if not has_break and not has_continue and not stmt.orelse:
+                body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
+                if is_forever:
+                    return [self.api.flow.forever(*body_blocks)]
+                end_cond = self.negate_condition(stmt.test, fn_name, params)
+                return [self.api.flow.repeat_until(end_cond, *body_blocks)]
+
+            # Full path: has break or continue — need loop control variables + per-stmt guards
             break_var = f"__break_{getattr(stmt,'lineno','while')}"
             cont_var = f"__continue_{getattr(stmt,'lineno','while')}"
             self.api.vars.ensure(break_var, 0, namespace=fn_name)
@@ -1108,6 +1141,22 @@ class PythonFirstContext:
             init_blocks.append(self.api.vars.set(loop_var, start, namespace=fn_name))
 
         body_params = params | {loop_var}
+
+        # Fast path: no break/continue — simplified loop without loop control vars/guards
+        has_break_r, has_continue_r = _has_direct_break_or_continue(stmt.body)
+        if not has_break_r and not has_continue_r:
+            body_blocks = self.compile_body(stmt.body, fn_name, body_params, return_ctx=return_ctx)
+            body_blocks.append(self.api.vars.set(
+                loop_var,
+                self.api.ops.add(self.api.vars.get(loop_var, namespace=fn_name), step_const),
+                namespace=fn_name
+            ))
+            if step_const > 0:
+                end_cond = self.api.ops.not_(self.api.ops.lt(self.api.vars.get(loop_var, namespace=fn_name), stop))
+            else:
+                end_cond = self.api.ops.not_(self.api.ops.gt(self.api.vars.get(loop_var, namespace=fn_name), stop))
+            return [*init_blocks, self.api.flow.repeat_until(end_cond, *body_blocks)]
+
         body_blocks = [self.api.vars.set(cont_var, 0, namespace=fn_name)]
         body_blocks.extend(self.compile_body(stmt.body, fn_name, body_params, loop_ctx=lctx, return_ctx=return_ctx))
         inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
