@@ -307,7 +307,13 @@ class PythonFirstContext:
                     if not deco_fn.startswith('run.when_'):
                         continue
                     kind = deco_fn[len('run.when_'):]  # e.g. 'broadcast', 'condition', 'button'
-                    args_ev = [self.const_eval(a) for a in (deco.args if isinstance(deco, ast.Call) else [])]
+                    raw_args = deco.args if isinstance(deco, ast.Call) else []
+                    # Keep Lambda nodes as-is so they can be compiled later;
+                    # evaluate everything else as a constant.
+                    args_ev = [
+                        a if isinstance(a, ast.Lambda) else self.const_eval(a)
+                        for a in raw_args
+                    ]
                     kw_ev = {kw.arg: self.const_eval(kw.value) for kw in (deco.keywords if isinstance(deco, ast.Call) else [])}
                     entry = {'type': kind, 'fn': node, 'args': args_ev, 'kw': kw_ev}
                     self._event_handlers.append(entry)
@@ -391,8 +397,17 @@ class PythonFirstContext:
                     msg = args[0] if args else kw.get('message', 'message1')
                     hat_id = self.api.flow.when('broadcast', *body, message=msg)
                 elif kind == 'condition':
-                    self.note(f"@run.when_condition: condition compiled as whenCondition block (lambda not supported at compile time)", fn)
-                    hat_id = self.api.flow.when('condition', *body, condition=None)
+                    cond_arg = args[0] if args else kw.get('condition')
+                    # Lambda node: compile its body as a condition expression
+                    if isinstance(cond_arg, ast.Lambda):
+                        fn_params = {a.arg for a in cond_arg.args.args}
+                        condition = self.compile_condition(cond_arg.body, fn.name, fn_params)
+                    elif isinstance(cond_arg, str) and cond_arg in self.project.blocks:
+                        condition = cond_arg
+                    else:
+                        condition = None
+                        self.note(f"@run.when_condition: condition could not be compiled (got {cond_arg!r})", fn)
+                    hat_id = self.api.flow.when('condition', *body, condition=condition)
                 elif kind == 'button':
                     button = args[0] if len(args) > 0 else kw.get('button', 'left')
                     action = args[1] if len(args) > 1 else kw.get('action', kw.get('event', 'pressed'))
