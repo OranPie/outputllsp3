@@ -53,10 +53,14 @@ class TestEnumAttrsDict:
     def test_port_members(self):
         for letter in ("A", "B", "C", "D", "E", "F"):
             assert _ENUM_ATTRS[f"Port.{letter}"] == letter
+        for combo in ("AB", "BCD", "ABCD", "ABCEF", "ABCDEF"):
+            assert _ENUM_ATTRS[f"Port.{combo}"] == combo
 
     def test_motor_pair_members(self):
         assert _ENUM_ATTRS["MotorPair.AB"] == "AB"
         assert _ENUM_ATTRS["MotorPair.BA"] == "BA"
+        assert _ENUM_ATTRS["MotorPair.EF"] == "EF"
+        assert _ENUM_ATTRS["MotorPair.FE"] == "FE"
 
 
 class TestCompilerConstEval:
@@ -108,6 +112,10 @@ class TestCompilerConstEval:
         ctx = self._ctx()
         assert ctx.const_eval(self._attr("Port.A")) == "A"
 
+    def test_port_abcdef(self):
+        ctx = self._ctx()
+        assert ctx.const_eval(self._attr("Port.ABCDEF")) == "ABCDEF"
+
 
 class TestCompilerRoundTrip:
     """Enum-rich python-first source must compile without errors."""
@@ -157,3 +165,80 @@ from outputllsp3 import robot, run, port, Axis
 def main():
     x = robot.angle(Axis.YAW)
 """)
+
+    def test_shadowed_module_defaults_compile(self):
+        self._compile("""\
+from outputllsp3 import robot, run, port
+
+微分 = '2'
+PID = '0'
+
+@run.main
+def main():
+    微分 = 3
+    PID = 0
+    D = (微分 * 1.2)
+    robot.run_motor_power(port.B, (max(8, (D + PID)) * -1))
+""")
+
+    def test_builtin_min_max_map_lowering(self):
+        self._compile("""\
+from outputllsp3 import robot, run
+
+@run.main
+def main():
+    x = max(8, 3) + min(2, 1)
+    y = map(5, 0, 10, 0, 100)
+""")
+
+    def test_when_condition_uses_live_global_variable(self):
+        import json
+        import os
+        import tempfile
+        import zipfile
+        from pathlib import Path
+        from outputllsp3 import transpile_pythonfirst_file, reset_pythonfirst_registry
+        from outputllsp3.workflow import discover_defaults
+
+        reset_pythonfirst_registry()
+        d = discover_defaults(".")
+        src = """\
+from outputllsp3 import run
+
+任务 = '13'
+
+@run.when_condition(lambda: (任务 == 1))
+def on_task_1():
+    pass
+"""
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(src)
+            py = f.name
+        llsp3 = py.replace(".py", ".llsp3")
+        try:
+            transpile_pythonfirst_file(py, template=d["template"], strings=d["strings"], out=llsp3)
+            zf = zipfile.ZipFile(llsp3)
+            inner = zipfile.ZipFile(zf.open("scratch.sb3"))
+            proj = json.loads(inner.read("project.json"))
+            target = next(t for t in proj["targets"] if t.get("isStage") is False)
+            hats = [blk for blk in target["blocks"].values() if blk.get("opcode") == "flipperevents_whenCondition"]
+            conds = []
+            for blk in hats:
+                cond_ref = blk["inputs"]["CONDITION"][1]
+                cond_blk = target["blocks"][cond_ref]
+                if cond_blk.get("opcode") == "operator_equals":
+                    conds.append(cond_blk)
+            assert conds, "no condition hats compiled"
+            # The live variable should not be folded to the module-level string literal "13".
+            assert any(
+                cond["inputs"]["OPERAND2"][1][1] == "1" and cond["inputs"]["OPERAND1"][0] == 3
+                for cond in conds
+            )
+            assert not any(
+                cond["inputs"]["OPERAND2"][1][1] == "1" and cond["inputs"]["OPERAND1"][1][1] == "13"
+                for cond in conds
+            )
+        finally:
+            os.unlink(py)
+            if Path(llsp3).exists():
+                os.unlink(llsp3)

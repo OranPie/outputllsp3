@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import logging
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from ..project import LLSP3Project
 from ..locale import t
 from ..enums import (
     Axis, Color, Comparator, Direction, LightImage,
-    MotorPair, Port, StopMode,
+    MotorPair, Port, StopMode, Unit,
 )
 
 # Flat lookup: "ClassName.MEMBER" → the string value the compiler should emit.
@@ -33,21 +34,18 @@ _ENUM_ATTRS.update({f"LightImage.{m.name}": m.value for m in LightImage})
 _ENUM_ATTRS.update({f"MotorPair.{m.name}": m.value for m in MotorPair})
 _ENUM_ATTRS.update({f"Port.{m.name}": m.value for m in Port})
 _ENUM_ATTRS.update({f"StopMode.{m.name}": m.value for m in StopMode})
+_ENUM_ATTRS.update({f"Unit.{m.name}": m.value for m in Unit})
+
+def _build_port_map() -> dict[str, str]:
+    letters = ("A", "B", "C", "D", "E", "F")
+    values = list(letters)
+    for size in range(2, len(letters) + 1):
+        values.extend(''.join(combo) for combo in combinations(letters, size))
+    return {f"port.{p}": p for p in values}
+
 
 # All valid SPIKE port strings (single and multi-port combinations).
-_PORT_MAP: dict[str, str] = {
-    f"port.{p}": p for p in (
-        "A", "B", "C", "D", "E", "F",
-        "AB", "AC", "AD", "AE", "AF",
-        "BC", "BD", "BE", "BF",
-        "CD", "CE", "CF", "DE", "DF", "EF",
-        "ABC", "ABD", "ABE", "ABF",
-        "ACD", "ACE", "ACF", "ADE", "ADF", "AEF",
-        "BCD", "BCE", "BCF", "BDE", "BDF", "BEF",
-        "CDE", "CDF", "CEF", "DEF",
-        "ABCD", "ABCDE", "ABCDEF",
-    )
-}
+_PORT_MAP: dict[str, str] = _build_port_map()
 
 # stdlib result attribute lookup: "stdlib.<name>" → (group_to_install, stdlib_property_name)
 # Both the canonical _result-suffixed names and shorthand aliases are included so
@@ -102,6 +100,20 @@ def _has_direct_break(body: list) -> bool:
     return has_break
 
 
+def _stmt_might_change_ctrl(stmt: ast.stmt, check_break_cont: bool, check_return: bool) -> bool:
+    """Return True if *stmt* (or a direct if-branch within it) might set a control-flow
+    flag variable (break, continue, or return).  Does not recurse into nested loops."""
+    if check_break_cont and isinstance(stmt, (ast.Break, ast.Continue)):
+        return True
+    if check_return and isinstance(stmt, ast.Return):
+        return True
+    if isinstance(stmt, ast.If):
+        for child in stmt.body + stmt.orelse:
+            if _stmt_might_change_ctrl(child, check_break_cont, check_return):
+                return True
+    return False
+
+
 class UnsupportedNode(Exception):
     pass
 
@@ -146,7 +158,7 @@ class PythonFirstContext:
         self.notes: list[str] = []
         self.const_env: dict[str, Any] = {}
         self.list_decls: dict[str, str] = {}
-        self.proc_defs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        self.proc_defs: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, dict]] = []
         self.main_def: ast.FunctionDef | ast.AsyncFunctionDef | None = None
         # Event-hat handlers collected from @run.when_* decorators.
         # Each entry: {'type': str, 'fn': FunctionDef, **kwargs}
@@ -164,6 +176,20 @@ class PythonFirstContext:
         self.proc_defaults: dict[str, dict[str, Any]] = {}
         # robot.note('text') calls collected per function name for comment attachment.
         self._fn_notes: dict[str, list[str]] = {}
+        # robot.note(..., attach='next') buffered until the next concrete block
+        # is emitted in that function.
+        self._pending_fn_notes: dict[str, list[str]] = {}
+        # robot.note(..., attach='first') buffered until the first concrete block
+        # is emitted in that function.
+        self._pending_first_notes: dict[str, list[str]] = {}
+        # Last concrete statement block emitted per function. Used by
+        # robot.note(..., attach='prev'/'last').
+        self._last_stmt_block: dict[str, str] = {}
+        # First concrete statement block emitted per function.
+        self._first_stmt_block: dict[str, str] = {}
+        # Expression-side lowering blocks that must run before the next emitted
+        # statement in the same function.
+        self._pending_expr_blocks: dict[str, list[str]] = {}
         # robot.note('text', floating=True) calls collected at module level.
         self._floating_notes: list[str] = []
         # Module-level variable declarations: name → initial_value.
@@ -171,6 +197,9 @@ class PythonFirstContext:
         # names inside function bodies use the global scope (no fn_name prefix),
         # matching Scratch semantics where all variables are global by default.
         self._global_vars: dict[str, Any] = {}
+        # Function-local assignment targets collected up front so const folding
+        # does not accidentally treat shadowed module globals as constants.
+        self._fn_local_vars: dict[str, set[str]] = {}
         self.runtime_config = {
             "motor_pair": "AB",
             "left_dir": 1,
@@ -183,6 +212,43 @@ class PythonFirstContext:
         line = getattr(node, "lineno", "?") if node is not None else "?"
         self.notes.append(f"L{line}: {msg}")
         logger.debug(t("pf.note", msg=f"L{line}: {msg}"))
+
+    def _collect_function_locals(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            elif isinstance(node, ast.ExceptHandler) and isinstance(node.name, str):
+                names.add(node.name)
+        return names
+
+    def _expr_uses_local_name(self, expr: ast.AST, fn_name: str, params: set[str]) -> bool:
+        local_names = self._fn_local_vars.get(fn_name, set()) | params
+        for node in ast.walk(expr):
+            if isinstance(node, ast.Name) and node.id in local_names:
+                return True
+        return False
+
+    def _attach_pending_notes(self, fn_name: str, blocks: list[str]) -> list[str]:
+        first_pending = self._pending_first_notes.get(fn_name, [])
+        if first_pending and blocks and fn_name not in self._first_stmt_block:
+            self.project.add_comment(blocks[0], '\n'.join(first_pending))
+            self._pending_first_notes[fn_name] = []
+        pending = self._pending_fn_notes.get(fn_name, [])
+        if pending and blocks:
+            self.project.add_comment(blocks[0], '\n'.join(pending))
+            self._pending_fn_notes[fn_name] = []
+        if blocks:
+            self._first_stmt_block.setdefault(fn_name, blocks[0])
+            self._last_stmt_block[fn_name] = blocks[-1]
+        return blocks
+
+    def _with_expr_prelude(self, fn_name: str, blocks: list[str]) -> list[str]:
+        prelude = self._pending_expr_blocks.get(fn_name, [])
+        if not prelude:
+            return blocks
+        self._pending_expr_blocks[fn_name] = []
+        return [*prelude, *blocks]
 
     # ---------- top-level analysis ----------
 
@@ -295,12 +361,32 @@ class PythonFirstContext:
                             'discrete': kw.get('discrete', True),
                         })
                         continue
+                if fname == 'robot.note':
+                    text_val = self.const_eval(node.value.args[0]) if node.value.args else ''
+                    kw = {kw.arg: self.const_eval(kw.value) for kw in node.value.keywords}
+                    if not isinstance(text_val, str):
+                        text_val = str(text_val)
+                    if kw.get('floating', False):
+                        self._floating_notes.append(text_val)
+                    else:
+                        # Module-level non-floating notes have no natural stack target.
+                        # Preserve them as floating comments instead of dropping them.
+                        self._floating_notes.append(text_val)
+                    continue
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._fn_local_vars[node.name] = self._collect_function_locals(node)
                 deco_names = [self.attr_name(d) for d in node.decorator_list]
                 if "run.main" in deco_names:
                     self.main_def = node
                 if "robot.proc" in deco_names:
-                    self.proc_defs.append(node)
+                    # Extract optional layout metadata from @robot.proc(category=..., x=..., y=...)
+                    meta: dict = {}
+                    for deco in node.decorator_list:
+                        if self.attr_name(deco) == 'robot.proc' and isinstance(deco, ast.Call):
+                            for kw in deco.keywords:
+                                if kw.arg in ('category', 'x', 'y'):
+                                    meta[kw.arg] = self.const_eval(kw.value)
+                    self.proc_defs.append((node, meta))
                 # @run.when_*(...) — collect as event-hat handlers
                 for deco in node.decorator_list:
                     deco_fn = self.attr_name(deco.func) if isinstance(deco, ast.Call) else self.attr_name(deco)
@@ -340,8 +426,10 @@ class PythonFirstContext:
         self.declare_resources()
 
         # procedures first
-        idx = 0
-        for fn in self.proc_defs:
+        _proc_categories: dict[str, str] = {}  # block_id → category name
+        _pinned_procs: set[str] = set()         # block_ids with explicit canvas positions
+
+        for fn, meta in self.proc_defs:
             params = [a.arg for a in fn.args.args]
             logger.debug(t("pf.proc", name=fn.name, arg_count=len(params)))
             # Collect default values for each parameter.
@@ -362,12 +450,29 @@ class PythonFirstContext:
                 # Reset flag at the start of each call so it doesn't carry over.
                 init_blocks = [self.api.vars.set(flag_var, 0, raw=True)]
             body = self.compile_body(fn.body, fn_name=fn.name, params=set(params), return_ctx=return_ctx)
-            def_id = self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, x=700, y=160 + idx * 230)
-            idx += 1
+            # Use explicit canvas position if @robot.proc(x=..., y=...) was specified.
+            # Pinned procedures are not repositioned by relayout().
+            pos_kw: dict = {}
+            if 'x' in meta or 'y' in meta:
+                pos_kw['x'] = meta.get('x')
+                pos_kw['y'] = meta.get('y')
+            def_id = self.api.flow.procedure(fn.name, params, *init_blocks, *body, defaults=defaults_list, **pos_kw)
+            if pos_kw:
+                _pinned_procs.add(def_id)
+            if 'category' in meta:
+                _proc_categories[def_id] = meta['category']
             # Attach any robot.note() calls from this proc's body as a Scratch comment
             fn_notes = self._fn_notes.get(fn.name, [])
             if fn_notes:
                 self.project.add_comment(def_id, '\n'.join(fn_notes))
+            pending_notes = self._pending_fn_notes.get(fn.name, [])
+            if pending_notes:
+                self.project.add_comment(def_id, '\n'.join(pending_notes))
+                self._pending_fn_notes[fn.name] = []
+            pending_first = self._pending_first_notes.get(fn.name, [])
+            if pending_first:
+                self.project.add_comment(def_id, '\n'.join(pending_first))
+                self._pending_first_notes[fn.name] = []
 
         if self.main_def is None:
             raise RuntimeError("No @run.main function found")
@@ -382,6 +487,14 @@ class PythonFirstContext:
         main_notes = self._fn_notes.get(self.main_def.name, [])
         if main_notes:
             self.project.add_comment(start, '\n'.join(main_notes))
+        pending_main_notes = self._pending_fn_notes.get(self.main_def.name, [])
+        if pending_main_notes:
+            self.project.add_comment(start, '\n'.join(pending_main_notes))
+            self._pending_fn_notes[self.main_def.name] = []
+        pending_main_first = self._pending_first_notes.get(self.main_def.name, [])
+        if pending_main_first:
+            self.project.add_comment(start, '\n'.join(pending_main_first))
+            self._pending_first_notes[self.main_def.name] = []
 
         # Compile all @run.when_*(...) handlers as event-hat stacks.
         for i, ev in enumerate(self._event_handlers):
@@ -453,6 +566,14 @@ class PythonFirstContext:
                     fn_notes = self._fn_notes.get(fn.name, [])
                     if fn_notes:
                         self.project.add_comment(hat_id, '\n'.join(fn_notes))
+                    pending_notes = self._pending_fn_notes.get(fn.name, [])
+                    if pending_notes:
+                        self.project.add_comment(hat_id, '\n'.join(pending_notes))
+                        self._pending_fn_notes[fn.name] = []
+                    pending_first = self._pending_first_notes.get(fn.name, [])
+                    if pending_first:
+                        self.project.add_comment(hat_id, '\n'.join(pending_first))
+                        self._pending_first_notes[fn.name] = []
             except Exception as exc:
                 self.note(f"@run.when_{kind}: compile error ({exc}) — skipped", fn)
 
@@ -473,6 +594,15 @@ class PythonFirstContext:
                 )
             except KeyError:
                 pass  # variable never used in code — skip
+
+        # Re-compute canvas positions based on actual stack depths now that all
+        # blocks have been emitted.  This replaces the provisional positions set
+        # by FlowBuilder and LayoutManager during compilation with accurate ones
+        # that prevent overlap between procedures, events, and start blocks.
+        self.api.relayout(
+            categories=_proc_categories or None,
+            pinned=_pinned_procs or None,
+        )
 
     # ---------- constants ----------
 
@@ -516,10 +646,13 @@ class PythonFirstContext:
             b = self.const_eval(expr.right)
             if a is None or b is None:
                 return None
-            if isinstance(expr.op, ast.Add): return a + b
-            if isinstance(expr.op, ast.Sub): return a - b
-            if isinstance(expr.op, ast.Mult): return a * b
-            if isinstance(expr.op, ast.Div): return a / b
+            try:
+                if isinstance(expr.op, ast.Add): return a + b
+                if isinstance(expr.op, ast.Sub): return a - b
+                if isinstance(expr.op, ast.Mult): return a * b
+                if isinstance(expr.op, ast.Div): return a / b
+            except TypeError:
+                return None
         return None
 
     # ---------- expressions ----------
@@ -534,6 +667,19 @@ class PythonFirstContext:
         return self.api.ops.or_(self.api.ops.lt(value, 0), self.api.ops.gt(value, 0))
 
     def compile_expr(self, expr: ast.expr, fn_name: str, params: set[str]) -> Any:
+        # Module-level assigned names are Scratch variables, not compile-time
+        # constants.  Always lower them as live reporters so event conditions
+        # and later assignments see the runtime value.
+        if isinstance(expr, ast.Name) and expr.id in self._global_vars:
+            if expr.id in params:
+                return self.project.arg(expr.id)
+            if expr.id in self.list_decls:
+                return self.api.lists.length(self.list_decls[expr.id])
+            return self.api.vars.get(expr.id, namespace="")
+        if not self._expr_uses_local_name(expr, fn_name, params):
+            const_value = self.const_eval(expr)
+            if const_value is not None:
+                return const_value
         if isinstance(expr, ast.Constant):
             return expr.value
         if isinstance(expr, ast.Name):
@@ -592,6 +738,34 @@ class PythonFirstContext:
                 return self.api.lists.length(self.list_decls[expr.args[0].id])
             if fname == 'abs' and expr.args:
                 return self.api.ops.abs(self.compile_expr(expr.args[0], fn_name, params))
+            if fname in {'min', 'max', 'map'}:
+                # Lower builtin math helpers to the stdlib procedures, then read
+                # back the corresponding reporter variable.
+                self.ensure_stdlib_group('math')
+                if fname == 'min' and len(expr.args) >= 2:
+                    self._pending_expr_blocks.setdefault(fn_name, []).append(
+                        self.api.flow.call("MinVal",
+                                           self.compile_expr(expr.args[0], fn_name, params),
+                                           self.compile_expr(expr.args[1], fn_name, params))
+                    )
+                    return self.api.stdlib.min_result
+                if fname == 'max' and len(expr.args) >= 2:
+                    self._pending_expr_blocks.setdefault(fn_name, []).append(
+                        self.api.flow.call("MaxVal",
+                                           self.compile_expr(expr.args[0], fn_name, params),
+                                           self.compile_expr(expr.args[1], fn_name, params))
+                    )
+                    return self.api.stdlib.max_result
+                if fname == 'map' and len(expr.args) >= 5:
+                    self._pending_expr_blocks.setdefault(fn_name, []).append(
+                        self.api.flow.call("MapRange",
+                                           self.compile_expr(expr.args[0], fn_name, params),
+                                           self.compile_expr(expr.args[1], fn_name, params),
+                                           self.compile_expr(expr.args[2], fn_name, params),
+                                           self.compile_expr(expr.args[3], fn_name, params),
+                                           self.compile_expr(expr.args[4], fn_name, params))
+                    )
+                    return self.api.stdlib.map_result
             if fname in {'int', 'float'} and expr.args:
                 return self.compile_expr(expr.args[0], fn_name, params)
             # robot.* expression helpers
@@ -783,16 +957,60 @@ class PythonFirstContext:
     def compile_body(self, body: list[ast.stmt], fn_name: str, params: set[str],
                      loop_ctx: LoopContext | None = None,
                      return_ctx: ReturnContext | None = None) -> list[str]:
+        if not body:
+            return []
+        if loop_ctx is None and return_ctx is None:
+            out: list[str] = []
+            for stmt in body:
+                out.extend(self.compile_stmt(stmt, fn_name, params))
+            return out
+        return self._compile_body_guarded(body, fn_name, params, loop_ctx, return_ctx)
+
+    def _compile_body_guarded(self, body: list[ast.stmt], fn_name: str, params: set[str],
+                               loop_ctx: LoopContext | None,
+                               return_ctx: ReturnContext | None) -> list[str]:
+        """Compile body with control-flow guards using nested-if grouping.
+
+        Instead of wrapping every compiled block in its own ``control_if`` guard
+        (O(N) guard blocks for N statements), this method splits the body at the
+        *first* statement that might set a control-flow flag (break/continue/return)
+        and wraps only the *tail* in a single guard block.  Multiple split-points
+        produce nested ``if`` blocks — O(k) guards for k split-points rather than
+        O(N) for N statements.
+        """
+        check_bc = loop_ctx is not None
+        check_ret = return_ctx is not None
+
+        # Find the first statement that might set a control-flow flag.
+        split = -1
+        for i, stmt in enumerate(body):
+            if _stmt_might_change_ctrl(stmt, check_bc, check_ret):
+                split = i
+                break
+
         out: list[str] = []
-        for stmt in body:
-            compiled = self.compile_stmt(stmt, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
-            if loop_ctx is None and return_ctx is None:
-                out.extend(compiled)
-            else:
-                for blk in compiled:
-                    # Create a fresh guard for each block – Scratch blocks can only have one parent.
-                    guard = self._execution_guard(loop_ctx, return_ctx)
-                    out.append(self.api.flow.if_(guard, blk))
+
+        if split == -1:
+            # No statement can set flags here: compile all without per-statement wrapping.
+            # Still forward loop_ctx / return_ctx so nested if-branches handle their own
+            # inner break/continue correctly.
+            for stmt in body:
+                out.extend(self.compile_stmt(stmt, fn_name, params,
+                                             loop_ctx=loop_ctx, return_ctx=return_ctx))
+            return out
+
+        # Compile up to and including the split statement without outer guard wrapping.
+        for stmt in body[:split + 1]:
+            out.extend(self.compile_stmt(stmt, fn_name, params,
+                                         loop_ctx=loop_ctx, return_ctx=return_ctx))
+
+        # Wrap the tail in a single guard and recurse for any further split-points.
+        rest = body[split + 1:]
+        if rest:
+            guard = self._execution_guard(loop_ctx, return_ctx)
+            rest_blocks = self._compile_body_guarded(rest, fn_name, params, loop_ctx, return_ctx)
+            if rest_blocks:
+                out.append(self.api.flow.if_(guard, *rest_blocks))
         return out
 
     def _execution_guard(self, loop_ctx: LoopContext | None, return_ctx: ReturnContext | None) -> str:
@@ -874,7 +1092,7 @@ class PythonFirstContext:
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             special = self._compile_list_side_effect(stmt.value, fn_name, params)
             if special is not None:
-                return special
+                return self._with_expr_prelude(fn_name, special)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
             target_node = stmt.targets[0]
             if isinstance(target_node, ast.Name):
@@ -896,19 +1114,25 @@ class PythonFirstContext:
                         self.api.vars.get(rctx.retval_var, raw=True),
                         namespace=eff_ns,
                     )
-                    return [call_blk, assign_blk]
+                    return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [call_blk, assign_blk]))
                 # top-level list declaration inside function is not supported, but keep note
                 if self._is_ls_list_call(stmt.value):
                     lname = self._extract_list_name(stmt.value, target)
                     self.list_decls[target] = lname
                     self.api.lists.add(lname, [])
-                    return []
+                    return self._with_expr_prelude(fn_name, [])
                 self.api.vars.ensure(target, 0, namespace=eff_ns)
-                return [self.api.vars.set(target, self.compile_expr(stmt.value, fn_name, params), namespace=eff_ns)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(
+                    fn_name,
+                    [self.api.vars.set(target, self.compile_expr(stmt.value, fn_name, params), namespace=eff_ns)]
+                ))
             if isinstance(target_node, ast.Subscript) and isinstance(target_node.value, ast.Name) and target_node.value.id in self.list_decls:
                 index_expr = self._compile_subscript_index(target_node.slice, fn_name, params)
                 one_based = self.api.ops.add(index_expr, 1)
-                return [self.api.lists.setitem(self.list_decls[target_node.value.id], one_based, self.compile_expr(stmt.value, fn_name, params))]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(
+                    fn_name,
+                    [self.api.lists.setitem(self.list_decls[target_node.value.id], one_based, self.compile_expr(stmt.value, fn_name, params))]
+                ))
 
         if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
             name = stmt.target.id
@@ -917,16 +1141,17 @@ class PythonFirstContext:
             rhs = self.compile_expr(stmt.value, fn_name, params)
             cur = self.api.vars.get(name, namespace=eff_ns)
             if isinstance(stmt.op, ast.Add):
-                return [self.api.vars.set(name, self.api.ops.add(cur, rhs), namespace=eff_ns)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.vars.set(name, self.api.ops.add(cur, rhs), namespace=eff_ns)]))
             if isinstance(stmt.op, ast.Sub):
-                return [self.api.vars.set(name, self.api.ops.sub(cur, rhs), namespace=eff_ns)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.vars.set(name, self.api.ops.sub(cur, rhs), namespace=eff_ns)]))
             if isinstance(stmt.op, ast.Mult):
-                return [self.api.vars.set(name, self.api.ops.mul(cur, rhs), namespace=eff_ns)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.vars.set(name, self.api.ops.mul(cur, rhs), namespace=eff_ns)]))
             if isinstance(stmt.op, ast.Div):
-                return [self.api.vars.set(name, self.api.ops.div(cur, rhs), namespace=eff_ns)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.vars.set(name, self.api.ops.div(cur, rhs), namespace=eff_ns)]))
 
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-            return [self.compile_call(stmt.value, fn_name, params)]
+            block = self.compile_call(stmt.value, fn_name, params)
+            return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [block] if block else []))
 
         if isinstance(stmt, ast.If):
             cond = self.compile_condition(stmt.test, fn_name, params)
@@ -934,14 +1159,14 @@ class PythonFirstContext:
             if stmt.orelse:
                 else_body = self.compile_body(stmt.orelse, fn_name, params, loop_ctx=loop_ctx, return_ctx=return_ctx)
                 if body and else_body:
-                    return [self.api.flow.if_else(cond, body, else_body)]
+                    return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.if_else(cond, body, else_body)]))
                 if body:
-                    return [self.api.flow.if_(cond, *body)]
+                    return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.if_(cond, *body)]))
                 if else_body:
                     neg_cond = self.negate_condition(stmt.test, fn_name, params)
-                    return [self.api.flow.if_(neg_cond, *else_body)]
+                    return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.if_(neg_cond, *else_body)]))
                 return []
-            return [self.api.flow.if_(cond, *body)] if body else []
+            return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.if_(cond, *body)])) if body else []
 
         if isinstance(stmt, ast.While):
             is_forever = isinstance(stmt.test, ast.Constant) and stmt.test.value is True
@@ -951,9 +1176,9 @@ class PythonFirstContext:
             if not has_break and not has_continue and not stmt.orelse:
                 body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
                 if is_forever:
-                    return [self.api.flow.forever(*body_blocks)]
+                    return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.forever(*body_blocks)]))
                 end_cond = self.negate_condition(stmt.test, fn_name, params)
-                return [self.api.flow.repeat_until(end_cond, *body_blocks)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.repeat_until(end_cond, *body_blocks)]))
 
             # Full path: has break or continue — need loop control variables + per-stmt guards
             break_var = f"__break_{getattr(stmt,'lineno','while')}"
@@ -979,7 +1204,7 @@ class PythonFirstContext:
                 else_body = self.compile_body(stmt.orelse, fn_name, params, return_ctx=return_ctx)
                 if else_body:
                     out.append(self.api.flow.if_(self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0), *else_body))
-            return out
+            return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, out))
 
         if isinstance(stmt, ast.For):
             # `for _ in range(N):` with constant N and no break/continue → native repeat block
@@ -995,7 +1220,7 @@ class PythonFirstContext:
             if is_simple_range:
                 n = self.compile_expr(stmt.iter.args[0], fn_name, params)
                 body_blocks = self.compile_body(stmt.body, fn_name, params, return_ctx=return_ctx)
-                return [self.api.flow.repeat(n, *body_blocks)]
+                return self._with_expr_prelude(fn_name, self._attach_pending_notes(fn_name, [self.api.flow.repeat(n, *body_blocks)]))
 
             break_var = f"__break_{getattr(stmt,'lineno','for')}"
             cont_var = f"__continue_{getattr(stmt,'lineno','for')}"
@@ -1019,7 +1244,7 @@ class PythonFirstContext:
                 inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
                 body_blocks.append(self.api.flow.if_(inc_guard, self.api.vars.set(index_name, self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1), namespace=fn_name)))
                 cond = self.api.ops.or_(self.api.ops.gt(self.api.vars.get(index_name, namespace=fn_name), self.api.ops.sub(self.api.lists.length(self.list_decls[stmt.iter.id]), 1)), self.api.vars.get(break_var, namespace=fn_name))
-                return [*init_blocks, self.api.flow.repeat_until(cond, *body_blocks)]
+                return self._with_expr_prelude(fn_name, [*init_blocks, self.api.flow.repeat_until(cond, *body_blocks)])
             if isinstance(stmt.iter, ast.Call) and self.attr_name(stmt.iter.func) == 'enumerate' and stmt.iter.args and isinstance(stmt.iter.args[0], ast.Name) and stmt.iter.args[0].id in self.list_decls and isinstance(stmt.target, ast.Tuple) and len(stmt.target.elts)==2:
                 idx_target = stmt.target.elts[0].id if isinstance(stmt.target.elts[0], ast.Name) else None
                 item_target = stmt.target.elts[1].id if isinstance(stmt.target.elts[1], ast.Name) else None
@@ -1039,24 +1264,24 @@ class PythonFirstContext:
                 inc_guard = self.api.ops.eq(self.api.vars.get(break_var, namespace=fn_name), 0)
                 body_blocks.append(self.api.flow.if_(inc_guard, self.api.vars.set(index_name, self.api.ops.add(self.api.vars.get(index_name, namespace=fn_name), 1), namespace=fn_name)))
                 cond = self.api.ops.or_(self.api.ops.gt(self.api.vars.get(index_name, namespace=fn_name), self.api.ops.sub(self.api.lists.length(self.list_decls[stmt.iter.args[0].id]), 1)), self.api.vars.get(break_var, namespace=fn_name))
-                return [*init_blocks, self.api.flow.repeat_until(cond, *body_blocks)]
+                return self._with_expr_prelude(fn_name, [*init_blocks, self.api.flow.repeat_until(cond, *body_blocks)])
             range_lowered = self._compile_for_range_loop(stmt, fn_name, params, lctx, break_var, cont_var, init_blocks, return_ctx=return_ctx)
             if range_lowered is not None:
-                return range_lowered
+                return self._with_expr_prelude(fn_name, range_lowered)
             self.note('only for range(...) is supported in python-first mode', stmt)
-            return init_blocks
+            return self._with_expr_prelude(fn_name, init_blocks)
 
         if isinstance(stmt, ast.Break):
             if loop_ctx is None:
                 self.note('break outside loop skipped', stmt)
-                return []
-            return [self.api.vars.set(loop_ctx.break_var, 1, namespace=loop_ctx.fn_name)]
+                return self._with_expr_prelude(fn_name, [])
+            return self._with_expr_prelude(fn_name, [self.api.vars.set(loop_ctx.break_var, 1, namespace=loop_ctx.fn_name)])
 
         if isinstance(stmt, ast.Continue):
             if loop_ctx is None or not loop_ctx.continue_var:
                 self.note('continue outside loop skipped', stmt)
-                return []
-            return [self.api.vars.set(loop_ctx.continue_var, 1, namespace=loop_ctx.fn_name)]
+                return self._with_expr_prelude(fn_name, [])
+            return self._with_expr_prelude(fn_name, [self.api.vars.set(loop_ctx.continue_var, 1, namespace=loop_ctx.fn_name)])
 
         if isinstance(stmt, ast.Delete):
             out = []
@@ -1067,12 +1292,12 @@ class PythonFirstContext:
                     out.append(self.api.lists.delete(self.list_decls[target.value.id], one_based))
                 else:
                     self.note('unsupported delete target skipped', stmt)
-            return out
+            return self._with_expr_prelude(fn_name, out)
 
         if isinstance(stmt, ast.Return):
             if return_ctx is None:
                 # return outside a proc with return value: no-op
-                return []
+                return self._with_expr_prelude(fn_name, [])
             blocks: list[str] = []
             if stmt.value is not None:
                 blocks.append(self.api.vars.set(return_ctx.retval_var,
@@ -1082,10 +1307,10 @@ class PythonFirstContext:
             # When inside a loop, also set the loop break flag to exit the loop early.
             if loop_ctx is not None:
                 blocks.append(self.api.vars.set(loop_ctx.break_var, 1, namespace=loop_ctx.fn_name))
-            return blocks
+            return self._with_expr_prelude(fn_name, blocks)
 
         self.note(f'unsupported stmt skipped: {type(stmt).__name__}', stmt)
-        return []
+        return self._with_expr_prelude(fn_name, [])
 
     def _compile_for_range(self, stmt: ast.For, fn_name: str, params: set[str]):
         loop_var = stmt.target.id if isinstance(stmt.target, ast.Name) else None
@@ -1303,10 +1528,25 @@ class PythonFirstContext:
             # robot.note('text', floating=True) → stored in _floating_notes
             text_val = self.const_eval(call.args[0]) if call.args else ''
             kw = {kw.arg: self.const_eval(kw.value) for kw in call.keywords}
+            attach = kw.get('attach', 'stack')
             if not isinstance(text_val, str):
                 text_val = str(text_val)
             if kw.get('floating', False):
                 self._floating_notes.append(text_val)
+            elif attach in {'next', 'block', 'statement'}:
+                self._pending_fn_notes.setdefault(fn_name, []).append(text_val)
+            elif attach == 'first':
+                first = self._first_stmt_block.get(fn_name)
+                if first:
+                    self.project.add_comment(first, text_val)
+                else:
+                    self._pending_first_notes.setdefault(fn_name, []).append(text_val)
+            elif attach in {'last', 'prev', 'previous'}:
+                prev = self._last_stmt_block.get(fn_name)
+                if prev:
+                    self.project.add_comment(prev, text_val)
+                else:
+                    self._fn_notes.setdefault(fn_name, []).append(text_val)
             else:
                 self._fn_notes.setdefault(fn_name, []).append(text_val)
             return None  # no block generated
@@ -1340,13 +1580,33 @@ class PythonFirstContext:
             return self.api.motor.run_for_degrees(args[0] if args else 'A', args[1] if len(args) > 1 else 360, args[2] if len(args) > 2 else 500)
         if name == 'robot.run_motor_for_seconds':
             return self.api.motor.run_for_seconds(args[0] if args else 'A', args[1] if len(args) > 1 else 1, args[2] if len(args) > 2 else 500)
+        if name == 'robot.run_motor_for_speed':
+            port = args[0] if args else 'A'
+            value = args[1] if len(args) > 1 else 360
+            speed = args[2] if len(args) > 2 else 500
+            unit = args[3] if len(args) > 3 else 'degrees'
+            return self.api.motor.run_for_speed(port, value, speed, unit)
         if name == 'robot.run_motor_for':
             # robot.run_motor_for(port, direction, value, unit)
+            kw = {kw.arg: self.const_eval(kw.value) for kw in call.keywords}
+            if 'speed' in kw:
+                # Backward-compatibility for older exporter output:
+                # robot.run_motor_for(port, value, unit, speed=...)
+                port = args[0] if args else 'A'
+                value = args[1] if len(args) > 1 else 360
+                unit = args[2] if len(args) > 2 else 'degrees'
+                return self.api.motor.run_for_speed(port, value, kw['speed'], unit)
             port = args[0] if args else 'A'
             direction = args[1] if len(args) > 1 else 'clockwise'
             value = args[2] if len(args) > 2 else 360
             unit = args[3] if len(args) > 3 else 'degrees'
             return self.api.motor.run_for_direction(port, direction, value, unit)
+        if name == 'robot.steer_for':
+            steering = args[0] if args else 0
+            distance = args[1] if len(args) > 1 else 360
+            unit = args[2] if len(args) > 2 else 'degrees'
+            speed = args[3] if len(args) > 3 else 500
+            return self.api.move.steer_for_distance(steering, distance, speed, unit)
         if name == 'robot.motor_go_to_position':
             # robot.motor_go_to_position(port, direction, position)
             port = args[0] if args else 'A'
@@ -1525,4 +1785,3 @@ class PythonFirstContext:
 def _load_source(path: str | Path) -> ast.Module:
     path = Path(path)
     return ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
-
